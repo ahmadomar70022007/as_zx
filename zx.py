@@ -89,7 +89,7 @@ init_db()
 
 # --- الهيدر والعلامة التجارية ---
 st.markdown("<h2 style='text-align: center; color: #f59e0b;'>✨ بسم الله الرحمن الرحيم ✨</h2>", unsafe_allow_html=True)
-st.markdown("<h1 style='text-align: center;'>👑 مَـتـاجِـر موسى وامينة واولادو وجيرانو وابو زيد المخضرمين</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>👑 مَـتـاجِـر الهاشمية</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #9ca3af;'>AL-MASHAQBEH TRADING CO. - العلامة التجارية المسجلة ®</p>", unsafe_allow_html=True)
 st.divider()
 
