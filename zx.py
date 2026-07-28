@@ -38,6 +38,13 @@ def init_db():
             date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # التحديث التلقائي: فحص ما إذا كان عمود الخصم موجوداً وإضافته إن لم يكن موجوداً
+    cursor.execute("PRAGMA table_info(sales)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'discount' not in columns:
+        cursor.execute("ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0")
+        
     conn.commit()
     conn.close()
 
