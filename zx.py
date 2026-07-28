@@ -40,10 +40,10 @@ st.markdown("""
     }
     .gold-box {
         border: 2px solid #f59e0b;
-        padding: 15px;
+        padding: 12px;
         border-radius: 10px;
         background-color: #111827;
-        margin-bottom: 15px;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -131,7 +131,6 @@ def init_db():
 
 init_db()
 
-# دالة تسجيل الأحداث والسجلات
 def log_action(username, action, details):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -204,7 +203,7 @@ def get_products():
     return df
 
 # ----------------------------------------------------
-# 1. كاشير المبيعات المطور (POS) مع الخصم
+# 1. كاشير المبيعات المطور (عرض الكل + خصم متعدد)
 # ----------------------------------------------------
 if menu == "🛒 كاشير المبيعات (POS)":
     st.header("🛒 نقطة البيع السريعة - متجر الهاشمية")
@@ -213,11 +212,11 @@ if menu == "🛒 كاشير المبيعات (POS)":
     if df_products.empty:
         st.warning("⚠️ لا توجد منتجات بالمخزن. يرجى إضافة منتجات من شاشة المخزون أولاً.")
     else:
-        col_scan, col_cart = st.columns([1, 1.2])
+        col_scan, col_cart = st.columns([1.3, 1.1])
 
         with col_scan:
-            st.subheader("🔍 البحث واختيار المواد")
-            search_query = st.text_input("🔎 بحث سريع (اسم / باركود):", key="pos_search")
+            st.subheader("📦 كافة المنتجات المتاحة")
+            search_query = st.text_input("🔎 تصفية سريعة (اسم / باركود):", key="pos_search")
             
             filtered_df = df_products
             if search_query:
@@ -227,61 +226,98 @@ if menu == "🛒 كاشير المبيعات (POS)":
                 ]
 
             if not filtered_df.empty:
-                selected_product_name = st.selectbox("اختر المنتج:", filtered_df["name"].tolist())
-                product_info = filtered_df[filtered_df["name"] == selected_product_name].iloc[0]
-                
-                st.info(f"💵 السعر الأصلي: **{product_info['price']:.2f} د.أ** | 📦 المخزون: **{product_info['stock']}**")
-                
-                max_q = int(product_info['stock']) if product_info['stock'] > 0 else 1
-                qty_to_add = st.number_input("الكمية المطلوبة:", min_value=1, max_value=max_q, value=1)
-                
-                if st.button("➕ إضافة إلى السلة", type="primary", use_container_width=True):
-                    if product_info['stock'] < qty_to_add:
-                        st.error("الكمية غير متوفرة بالمخزن!")
-                    else:
-                        st.session_state["cart"].append({
-                            "id": product_info['id'],
-                            "name": product_info['name'],
-                            "price": product_info['price'],
-                            "cost_price": product_info['cost_price'],
-                            "quantity": qty_to_add,
-                            "subtotal": product_info['price'] * qty_to_add,
-                            "profit": (product_info['price'] - product_info['cost_price']) * qty_to_add
-                        })
-                        st.success(f"تمت إضافة ({product_info['name']}) للسلة!")
+                # عرض قائمة جميع المنتجات بشكل تفاعلي وواضح
+                for idx, prod in filtered_df.iterrows():
+                    with st.container():
+                        p_col1, p_col2, p_col3, p_col4 = st.columns([2.5, 1.2, 1.2, 1])
+                        
+                        p_col1.write(f"**{prod['name']}**\n*(كود: {prod['barcode']})*")
+                        p_col2.write(f"السعر: **{prod['price']:.2f} د.أ**")
+                        p_col3.write(f"المخزون: `{prod['stock']}`")
+                        
+                        # زر إضافة مباشر للسلة
+                        if p_col4.button("➕ إضافة", key=f"add_btn_{prod['id']}"):
+                            if prod['stock'] <= 0:
+                                st.error("المادة غير متوفرة بالمخزن!")
+                            else:
+                                existing_item = next((item for item in st.session_state["cart"] if item["id"] == prod['id']), None)
+                                if existing_item:
+                                    if existing_item['quantity'] + 1 > prod['stock']:
+                                        st.error("الكمية المطلوبة تتجاوز المخزون!")
+                                    else:
+                                        existing_item['quantity'] += 1
+                                        existing_item['subtotal'] = existing_item['quantity'] * existing_item['price']
+                                        existing_item['profit'] = (existing_item['price'] - existing_item['cost_price']) * existing_item['quantity']
+                                        st.rerun()
+                                else:
+                                    st.session_state["cart"].append({
+                                        "id": prod['id'],
+                                        "name": prod['name'],
+                                        "price": prod['price'],
+                                        "cost_price": prod['cost_price'],
+                                        "quantity": 1,
+                                        "subtotal": prod['price'],
+                                        "profit": prod['price'] - prod['cost_price']
+                                    })
+                                    st.rerun()
+                        st.markdown("<hr style='margin: 4px 0; border-color: #374151;'>", unsafe_allow_html=True)
             else:
                 st.warning("لا توجد مواد تطابق البحث.")
 
         with col_cart:
-            st.subheader("🛒 فاتورة المشتريات الحالية")
+            st.subheader("🛒 محتويات الفاتورة الحالية")
             if not st.session_state["cart"]:
-                st.write("السلة فارغة حالياً.")
+                st.info("السلة فارغة. اضغط (➕ إضافة) بجانب أي منتج من القائمة.")
             else:
-                cart_df = pd.DataFrame(st.session_state["cart"])
-                st.dataframe(cart_df[["name", "price", "quantity", "subtotal"]], use_container_width=True, hide_index=True)
+                # تعديل الكمية مباشرة أو حذف العنصر من داخل السلة
+                for idx, item in enumerate(st.session_state["cart"]):
+                    c_name, c_qty, c_price, c_del = st.columns([2, 1.5, 1.2, 0.6])
+                    c_name.write(f"**{item['name']}**")
+                    
+                    # تعديل الكمية مباشرة
+                    prod_in_db = df_products[df_products["id"] == item["id"]].iloc[0]
+                    new_q = c_qty.number_input("الكمية", min_value=1, max_value=int(prod_in_db["stock"]), value=int(item["quantity"]), key=f"q_input_{idx}", label_visibility="collapsed")
+                    
+                    if new_q != item["quantity"]:
+                        item["quantity"] = new_q
+                        item["subtotal"] = new_q * item["price"]
+                        item["profit"] = (item["price"] - item["cost_price"]) * new_q
+                        st.rerun()
+
+                    c_price.write(f"**{item['subtotal']:.2f} د.أ**")
+                    
+                    if c_del.button("❌", key=f"del_{idx}"):
+                        st.session_state["cart"].pop(idx)
+                        st.rerun()
+
+                st.write("---")
+                subtotal_val = sum(item['subtotal'] for item in st.session_state["cart"])
                 
-                subtotal_val = cart_df["subtotal"].sum()
+                # نظام الخصم المتعدد (نسبة % أو مبلغ د.أ)
+                st.markdown("#### 🏷️ نظام الخصم المتعدد")
+                disc_type = st.radio("نوع الخصم:", ["مبلغ ثابت (د.أ)", "نسبة مئوية (%)"], horizontal=True)
                 
-                # إضافة خيار خصم إجمالي للفاتورة
                 col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    discount_val = st.number_input("🏷️ خصم مباشر (د.أ):", min_value=0.0, max_value=float(subtotal_val), value=0.0, step=0.5)
-                with col_d2:
-                    grand_total = subtotal_val - discount_val
-                    st.markdown(f"### 💳 الإجمالي الصافي: `{grand_total:.2f} د.أ`")
+                if disc_type == "مبلغ ثابت (د.أ)":
+                    discount_val = col_d1.number_input("قيمة الخصم (د.أ):", min_value=0.0, max_value=float(subtotal_val), value=0.0, step=0.5)
+                else:
+                    disc_perc = col_d1.number_input("نسبة الخصم (%):", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+                    discount_val = (disc_perc / 100.0) * subtotal_val
+
+                grand_total = subtotal_val - discount_val
+                col_d2.markdown(f"### 💳 الصافي: `{grand_total:.2f} د.أ`")
                 
                 cust_name = st.text_input("اسم الزبون:", value="زبون عام")
                 pay_method = st.radio("طريقة الدفع:", ["نقداً (Cash)", "بطاقة (Card)", "ذمم / دين"], horizontal=True)
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if st.button("✅ إتمام عملية البيع والطبع", type="primary", use_container_width=True):
+                    if st.button("✅ إتمام عملية البيع", type="primary", use_container_width=True):
                         conn = sqlite3.connect(DB_NAME)
                         c = conn.cursor()
                         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         seller = st.session_state.get("logged_user", "admin")
                         
-                        # توزيع الخصم ونسب الربح
                         for item in st.session_state["cart"]:
                             item_net_profit = item['profit'] - (discount_val / len(st.session_state["cart"]))
                             c.execute("""
@@ -298,9 +334,9 @@ if menu == "🛒 كاشير المبيعات (POS)":
                         conn.commit()
                         conn.close()
                         
-                        log_action(seller, "عملية بيع", f"فاتورة صافية {grand_total:.2f} د.أ (خصم {discount_val} د.أ) - الزبون: {cust_name}")
+                        log_action(seller, "عملية بيع", f"فاتورة بقيمة {grand_total:.2f} د.أ (خصم {discount_val:.2f} د.أ) - الزبون: {cust_name}")
                         st.session_state["cart"] = []
-                        st.success("🎉 تم تسجيل العملية بنجاح وخصم المحتويات من المخزن!")
+                        st.success("🎉 تم إتمام العملية بنجاح!")
                         st.rerun()
 
                 with col_btn2:
