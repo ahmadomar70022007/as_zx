@@ -116,11 +116,25 @@ def update_sale_debt(sale_id, new_total, is_paid=False):
     conn.commit()
     conn.close()
 
-def refund_sale(sale_id, product_name, quantity):
+def refund_sale_advanced(sale_id, product_name, qty_to_refund, refund_amount, return_to_stock=True, is_full_refund=True):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (quantity, product_name))
-    cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+    
+    # 1. إرجاع الكمية للمخزون إذا اختار المستخدم ذلك
+    if return_to_stock:
+        cursor.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (qty_to_refund, product_name))
+    
+    # 2. معالجة الفاتورة (إلغاء كامل أم تحديث جزئي)
+    if is_full_refund:
+        cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+    else:
+        cursor.execute("""
+            UPDATE sales 
+            SET quantity = quantity - ?, 
+                total_price = total_price - ? 
+            WHERE id = ?
+        """, (qty_to_refund, refund_amount, sale_id))
+        
     conn.commit()
     conn.close()
 
@@ -190,14 +204,14 @@ if st.session_state["user_role"] == "Admin":
         "🏪 كاشير المبيعات المطور", 
         "🚨 تنبيهات النقص المتقدمة", 
         "💳 سجل الذمم والديون المطور",
-        "🔄 استرجاع المبيعات", 
+        "🔄 استرجاع المبيعات المطور", 
         "📦 إدارة المخزون", 
         "🏷️ طباعة بطاقات الأسعار",
         "📊 السجل والتقارير المتقدمة",
         "⚙️ النسخ الاحتياطي والنظام"
     ]
 else:
-    menu_options = ["🏪 كاشير المبيعات المطور"]
+    menu_options = ["🏪 كاشير المبيعات المطور", "🔄 استرجاع المبيعات المطور"]
 
 menu = st.sidebar.radio("🔱 القائمة الرئيسية", menu_options)
 
@@ -403,7 +417,7 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
             st.download_button("📥 تنزيل قائمة الطلبيات للموردين (.csv)", data=reorder_csv, file_name="Reorder_Stock_List.csv", mime="text/csv", type="secondary")
 
 # ----------------------------------------------------
-# 3. قسم سجل الذمم والديون المطور المطور جداً
+# 3. قسم سجل الذمم والديون المطور
 # ----------------------------------------------------
 elif menu == "💳 سجل الذمم والديون المطور":
     st.header("💳 نظام إدارة وتجميع الذمم وسداد الديون")
@@ -414,7 +428,6 @@ elif menu == "💳 سجل الذمم والديون المطور":
         st.balloons()
         st.success("🎉 ممتاز! لا توجد أي ديون أو ذمم آحلة قائمة على الزبائن حالياً.")
     else:
-        # المؤشرات المالية
         total_credit = credit_sales["total_price"].sum()
         unique_debtors = credit_sales["customer_name"].nunique()
         max_debt = credit_sales["total_price"].max()
@@ -426,7 +439,6 @@ elif menu == "💳 سجل الذمم والديون المطور":
 
         st.divider()
 
-        # البحث والفلترة
         search_debtor = st.text_input("🔍 بحث عن عميل بالاسم أو رقم الهاتف:", key="debt_search")
         if search_debtor:
             filtered_credit = credit_sales[
@@ -453,9 +465,7 @@ elif menu == "💳 سجل الذمم والديون المطور":
 
         st.divider()
 
-        # محطة سداد الديون (Debt Settlement Station)
         st.subheader("💵 محطة تسديد وسداد الذمم (Debt Payment)")
-        
         col_pay1, col_pay2 = st.columns([1.2, 1], gap="large")
         
         with col_pay1:
@@ -513,21 +523,127 @@ elif menu == "💳 سجل الذمم والديون المطور":
                 st.info("قم بإجراء عملية تسديد لعرض سند القبض هنا.")
 
 # ----------------------------------------------------
-# 4. استرجاع المبيعات
+# 4. قسم استرجاع المبيعات المطور المطور
 # ----------------------------------------------------
-elif menu == "🔄 استرجاع المبيعات":
-    st.header("🔄 قسم استرجاع المبيعات")
+elif menu == "🔄 استرجاع المبيعات المطور":
+    st.header("🔄 قسم إدارة المرتجعات والاسترجاع المتقدم")
     df_sales = get_sales_history()
+    
     if df_sales.empty:
-        st.info("لا توجد مبيعات مسجلة لإرجاعها.")
+        st.info("💡 لا توجد عمليات بيع مسجلة حالياً في النظام.")
     else:
-        sale_to_refund = st.selectbox("اختر رقم الفاتورة لإرجاعها:", options=df_sales["id"].tolist())
-        selected_sale = df_sales[df_sales["id"] == sale_to_refund].iloc[0]
-        st.warning(f"تفاصيل الفاتورة المراد إرجاعها: **{selected_sale['product_name']}** (المبلغ: **{selected_sale['total_price']:.2f} د.أ**)")
-        if st.button("❌ تأكيد استرجاع الفاتورة", type="primary"):
-            refund_sale(selected_sale["id"], selected_sale["product_name"], int(selected_sale["quantity"]))
-            st.success("✅ تم إرجاع المبلغ واستعادة الكمية للمخزون بنجاح!")
-            st.rerun()
+        # البحث والفلترة
+        col_search1, col_search2 = st.columns([2, 1])
+        with col_search1:
+            search_refund = st.text_input("🔍 بحث عن فاتورة لمرتجع (برقم الفاتورة، اسم الزبون، المنتج أو الهاتف):")
+        
+        if search_refund:
+            df_filtered_sales = df_sales[
+                df_sales["id"].astype(str).str.contains(search_refund, case=False, na=False) |
+                df_sales["customer_name"].str.contains(search_refund, case=False, na=False) |
+                df_sales["product_name"].str.contains(search_refund, case=False, na=False) |
+                df_sales["customer_phone"].str.contains(search_refund, case=False, na=False)
+            ]
+        else:
+            df_filtered_sales = df_sales
+
+        st.subheader("📋 سجل الفواتير المتاحة للاسترجاع")
+        st.dataframe(
+            df_filtered_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "payment_method", "date"]],
+            column_config={
+                "id": "رقم الفاتورة",
+                "customer_name": "العميل",
+                "customer_phone": "الهاتف",
+                "product_name": "المنتج",
+                "quantity": "الكمية المباعة",
+                "total_price": st.column_config.NumberColumn("المبلغ الإجمالي", format="%.2f د.أ"),
+                "payment_method": "طريقة الدفع",
+                "date": "التاريخ"
+            },
+            use_container_width=True, hide_index=True
+        )
+
+        st.divider()
+
+        # نافذة تنفيذ الإرجاع
+        st.subheader("⚙️ إجراء وتنفيذ عملية الإرجاع")
+        
+        if df_filtered_sales.empty:
+            st.warning("⚠️ لا توجد فواتير تطابق بحثك.")
+        else:
+            col_ref1, col_ref2 = st.columns([1.2, 1], gap="large")
+            
+            with col_ref1:
+                selected_refund_id = st.selectbox("اختر رقم الفاتورة المراد إرجاعها:", df_filtered_sales["id"].tolist())
+                refund_item = df_filtered_sales[df_filtered_sales["id"] == selected_refund_id].iloc[0]
+                
+                unit_price = refund_item["total_price"] / refund_item["quantity"] if refund_item["quantity"] > 0 else 0
+                
+                st.info(f"👤 الزبون: **{refund_item['customer_name']}** | 📱 الهاتف: **{refund_item['customer_phone']}**")
+                st.warning(f"📦 المنتج: **{refund_item['product_name']}** | الكمية المباعة أصلياً: **{refund_item['quantity']} قطعة**")
+                st.markdown(f"💰 السعر الإجمالي: **{refund_item['total_price']:.2f} د.أ** (سعر القطعة الصافي: **{unit_price:.2f} د.أ**)")
+
+                refund_type = st.radio("نوع الاسترجاع:", ["استرجاع كلي (الفاتورة كاملة)", "استرجاع جزئي (بعض القطع)"], horizontal=True)
+                
+                if refund_type == "استرجاع جزئي (بعض القطع)":
+                    max_q_refund = int(refund_item['quantity'])
+                    qty_to_refund = st.number_input("حدد عدد القطع المراد إرجاعها:", min_value=1, max_value=max_q_refund, value=1)
+                    refund_cash_amount = qty_to_refund * unit_price
+                    is_full_refund = (qty_to_refund == max_q_refund)
+                else:
+                    qty_to_refund = int(refund_item['quantity'])
+                    refund_cash_amount = float(refund_item['total_price'])
+                    is_full_refund = True
+
+                st.markdown(f"💵 **المبلغ المطلوب إرجاعه للزبون:** <span style='color:#ef4444; font-size:22px; font-weight:bold;'>{refund_cash_amount:.2f} د.أ</span>", unsafe_allow_html=True)
+
+                restock_choice = st.checkbox("🔄 إعادة القطع المسترجعة للمخزون تلقائياً؟", value=True, help="الغي التحديد إذا كانت السلعة تالفة ولا تصلح للبيع مجدداً.")
+
+                if st.button("❌ تأكيد وتنفيذ عملية الإرجاع فوراً", type="primary", use_container_width=True):
+                    refund_sale_advanced(
+                        sale_id=refund_item['id'],
+                        product_name=refund_item['product_name'],
+                        qty_to_refund=qty_to_refund,
+                        refund_amount=refund_cash_amount,
+                        return_to_stock=restock_choice,
+                        is_full_refund=is_full_refund
+                    )
+                    
+                    st.success(f"✅ تم إرجاع ({qty_to_refund}) قطعة من [{refund_item['product_name']}] بنجاح!")
+                    if restock_choice:
+                        st.info("📦 تم إعادة القطع إلى المخزن بنجاح.")
+                    else:
+                        st.warning("⚠️ لم يتم إضافة القطع للمخزون (تم احتسابها كتالفة).")
+
+                    # إعداد إيصال المرتجع
+                    now_ref_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                    refund_receipt_text = f"""
+========================================
+         👑 متاجر المشاقبة 👑
+       إيصال استرجاع مبيعات / مرتجع
+========================================
+التاريخ: {now_ref_str}
+رقم الفاتورة الأصلية: #{refund_item['id']}
+اسم الزبون: {refund_item['customer_name']}
+----------------------------------------
+المنتج المسترجع: {refund_item['product_name']}
+الكمية المسترجعة: {qty_to_refund} قطعة
+المبلغ المسترد للزبون: {refund_cash_amount:.2f} د.أ
+حالة المخزون: {'تمت الإعادة للمخزن' if restock_choice else 'بضاعة تالفة'}
+----------------------------------------
+توقيع المسؤول: __________________
+========================================
+                  """
+                    st.session_state["last_refund_receipt"] = refund_receipt_text
+                    st.rerun()
+
+            with col_ref2:
+                st.subheader("📄 معاينة إيصال الإرجاع")
+                if "last_refund_receipt" in st.session_state:
+                    st.text_area("معاينة الإيصال:", st.session_state["last_refund_receipt"], height=270)
+                    st.download_button("🖨️ تنزيل سند المرتجع (TXT)", data=st.session_state["last_refund_receipt"], file_name=f"Refund_Receipt_{selected_refund_id}.txt", mime="text/plain")
+                else:
+                    st.info("قم بإجراء عملية إرجاع لعرض المعاينة وطباعتها هنا.")
 
 # ----------------------------------------------------
 # 5. إدارة المخزون
