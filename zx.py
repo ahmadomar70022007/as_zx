@@ -768,6 +768,12 @@ elif menu == "📊 التقارير المالية والأرباح":
     if df_sales.empty:
         st.info("لا توجد مبيعات مسجلة للتقرير حالياً.")
     else:
+        # التأكد من أن الأعمدة الرقمية بصيغة أرقام صحيحة أو عشرية لتجنب أخطاء التجميع
+        df_sales["total_price"] = pd.to_numeric(df_sales["total_price"], errors="coerce").fillna(0.0)
+        df_sales["discount"] = pd.to_numeric(df_sales["discount"], errors="coerce").fillna(0.0)
+        df_sales["net_profit"] = pd.to_numeric(df_sales["net_profit"], errors="coerce").fillna(0.0)
+        df_sales["quantity"] = pd.to_numeric(df_sales["quantity"], errors="coerce").fillna(0)
+
         # تحويل عمود التاريخ لتسهيل الفلترة
         df_sales["date_only"] = pd.to_datetime(df_sales["date"]).dt.date
 
