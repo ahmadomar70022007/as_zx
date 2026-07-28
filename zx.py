@@ -44,6 +44,16 @@ st.markdown("""
         background-color: #111827;
         margin-bottom: 10px;
     }
+    .welcome-card {
+        border: 2px solid #d97706;
+        background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+        padding: 30px;
+        border-radius: 16px;
+        text-align: center;
+        box-shadow: 0 10px 25px rgba(245, 158, 11, 0.2);
+        margin: auto;
+        max-width: 500px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -134,25 +144,72 @@ def log_action(username, action, details):
     conn.close()
 
 # ----------------------------------------------------
-# 3. إعداد الجلسة (Session State)
+# 3. إدارة جلسة تسجيل الدخول (Authentication State)
 # ----------------------------------------------------
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 if "logged_user" not in st.session_state:
-    st.session_state["logged_user"] = "admin"
+    st.session_state["logged_user"] = None
 if "user_role" not in st.session_state:
-    st.session_state["user_role"] = "Admin"
+    st.session_state["user_role"] = None
 if "cart" not in st.session_state:
     st.session_state["cart"] = []
 
 # ----------------------------------------------------
-# 4. القائمة الجانبية والصلاحيات
+# 4. شاشة تسجيل الدخول المخصصة مع الترحيب 🔒
+# ----------------------------------------------------
+if not st.session_state["authenticated"]:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+    with col_l2:
+        st.markdown("""
+        <div class="welcome-card">
+            <h1 style="color: #f59e0b; margin-bottom: 5px;">👑 متجر الهاشمية</h1>
+            <h3 style="color: #f8fafc; font-size: 18px; margin-top: 0;">أهلاً وسهلاً بكم في نظام المبيعات والمخزون الذكي</h3>
+            <p style="color: #9ca3af; font-size: 13px;">يرجى إدخال بيانات حسابك لتسجيل الدخول لبدء العمليات</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+
+        with st.form("login_form", clear_on_submit=False):
+            username_input = st.text_input("👤 اسم المستخدم:")
+            password_input = st.text_input("🔑 كلمة السر:", type="password")
+            
+            submit_login = st.form_submit_button("🔓 تسجيل الدخول", type="primary", use_container_width=True)
+            
+            if submit_login:
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("SELECT role FROM users WHERE username = ? AND password = ?", (username_input, password_input))
+                user_match = c.fetchone()
+                conn.close()
+
+                if user_match:
+                    st.session_state["authenticated"] = True
+                    st.session_state["logged_user"] = username_input
+                    st.session_state["user_role"] = user_match[0]
+                    log_action(username_input, "تسجيل دخول", "تم تسجيل الدخول بنجاح للنظام")
+                    st.success(f"مرحباً بك مجدداً {username_input}!")
+                    st.rerun()
+                else:
+                    st.error("❌ خطأ: اسم المستخدم أو كلمة السر غير صحيحة!")
+
+    st.stop()  # إيقاف التنفيذ عند شاشة تسجيل الدخول وعدم إظهار النظام
+
+# ----------------------------------------------------
+# 5. القائمة الجانبية وزر خروج الفعلي 🚪
 # ----------------------------------------------------
 st.sidebar.title("👑 متجر الهاشمية")
 st.sidebar.markdown(f"👤 **المستخدم:** `{st.session_state['logged_user']}`")
 st.sidebar.markdown(f"🛡️ **الصلاحية:** `{st.session_state['user_role']}`")
 
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
-    st.session_state["logged_user"] = "admin"
-    st.session_state["user_role"] = "Admin"
+    log_action(st.session_state["logged_user"], "تسجيل خروج", "تم تسجيل الخروج من النظام")
+    st.session_state["authenticated"] = False
+    st.session_state["logged_user"] = None
+    st.session_state["user_role"] = None
+    st.session_state["cart"] = []
     st.rerun()
 
 st.sidebar.write("---")
@@ -412,7 +469,7 @@ elif menu == "📙 سجل الذمم وتسديد الديون":
                 st.rerun()
 
 # ----------------------------------------------------
-# 4. قسم إرجاع واستبدال الفواتير المطور 🔄
+# 4. قسم إرجاع واستبدال الفواتير 🔄
 # ----------------------------------------------------
 elif menu == "🔄 إرجاع واستبدال الفواتير":
     st.header("🔄 قسم استرجاع واستبدال الفواتير المطور")
@@ -475,10 +532,8 @@ elif menu == "🔄 إرجاع واستبدال الفواتير":
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     
-                    # 1. إعادة الكمية إلى جدول المنتجات
                     c.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (return_qty, sale_row['product_name']))
                     
-                    # 2. تعديل أو حذف العملية من المبيعات
                     if return_qty == sale_row['quantity']:
                         c.execute("DELETE FROM sales WHERE id = ?", (selected_sale_id,))
                     else:
@@ -488,7 +543,6 @@ elif menu == "🔄 إرجاع واستبدال الفواتير":
                         c.execute("UPDATE sales SET quantity = ?, total_price = ?, net_profit = ? WHERE id = ?", 
                                   (new_qty, new_total, new_profit, selected_sale_id))
 
-                    # 3. معالجة الذمم إذا كانت العملية بالدين
                     if sale_row['payment_method'] == "ذمم / دين":
                         c.execute("SELECT id, amount FROM debts WHERE customer_name = ? AND status = 'غير مدفوع' ORDER BY id DESC LIMIT 1", (sale_row['customer_name'],))
                         debt_record = c.fetchone()
@@ -503,12 +557,10 @@ elif menu == "🔄 إرجاع واستبدال الفواتير":
                     conn.commit()
                     conn.close()
 
-                    # تسجيل الحادثة
                     log_action(st.session_state["logged_user"], "إرجاع فاتورة", f"إرجاع {return_qty} من {sale_row['product_name']} بقيمة {refund_amount:.2f} د.أ للزبون {sale_row['customer_name']}")
 
                     st.success(f"🎉 تم إرجاع {return_qty} قطعة بنجاح وتحديث الرصيد بالمخزن!")
 
-                    # طباعة سند إرجاع
                     receipt_html = f"""
                     <div style="border:2px dashed #f59e0b; padding:15px; border-radius:10px; text-align:center; color:white; background-color:#111827; width:300px; margin:auto;">
                         <h3 style="color:#f59e0b; margin:0;">👑 متجر الهاشمية</h3>
