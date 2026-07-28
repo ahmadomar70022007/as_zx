@@ -195,7 +195,7 @@ if not st.session_state["authenticated"]:
                 else:
                     st.error("❌ خطأ: اسم المستخدم أو كلمة السر غير صحيحة!")
 
-    st.stop()  # إيقاف التنفيذ عند شاشة تسجيل الدخول وعدم إظهار النظام
+    st.stop()
 
 # ----------------------------------------------------
 # 5. القائمة الجانبية وزر خروج الفعلي 🚪
@@ -236,7 +236,7 @@ elif current_role == "Inventory":
         "🏷️ طباعة بطاقات الأسعار",
         "👥 إدارة الحسابات والصلاحيات"
     ]
-else:  # Cashier
+else:
     menu_options = [
         "🛒 كاشير المبيعات (POS)",
         "🔄 إرجاع واستبدال الفواتير",
@@ -756,35 +756,92 @@ elif menu == "🏷️ طباعة بطاقات الأسعار":
         )
 
 # ----------------------------------------------------
-# 7. التقارير المالية والأرباح
+# 7. التقارير المالية والأرباح المحدثة 📊
 # ----------------------------------------------------
 elif menu == "📊 التقارير المالية والأرباح":
-    st.header("📊 لوحة المبيعات والتحليلات المالية")
+    st.header("📊 لوحة المبيعات والتحليلات المالية المتقدمة")
+    
     conn = sqlite3.connect(DB_NAME)
     df_sales = pd.read_sql_query("SELECT * FROM sales", conn)
     conn.close()
 
     if df_sales.empty:
-        st.info("لا توجد مبيعات مسجلة للتقرير.")
+        st.info("لا توجد مبيعات مسجلة للتقرير حالياً.")
     else:
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("إجمالي المبيعات", f"{df_sales['total_price'].sum():.2f} د.أ")
-        m2.metric("إجمالي الخصومات", f"{df_sales['discount'].sum():.2f} د.أ")
-        m3.metric("صافي الأرباح", f"{df_sales['net_profit'].sum():.2f} د.أ")
-        m4.metric("عدد الفواتير", len(df_sales))
+        # تحويل عمود التاريخ لتسهيل الفلترة
+        df_sales["date_only"] = pd.to_datetime(df_sales["date"]).dt.date
 
-        st.divider()
-        st.dataframe(df_sales, use_container_width=True, hide_index=True)
+        # شريط خيارات الفلترة المتقدمة
+        st.markdown("#### 📅 فلترة التقارير حسب النطاق الزمني")
+        filter_option = st.selectbox("اختر الفترة:", ["الكل", "اليوم الحالي", "آخر 7 أيام", "آخر 30 يوماً", "تاريخ مخصص"])
 
-        csv_data = df_sales.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            "📥 تصدير التقرير المالي إلى CSV/Excel",
-            data=csv_data,
-            file_name=f"Report_AlHashemiah_{datetime.date.today()}.csv",
-            mime="text/csv",
-            type="primary",
-            use_container_width=True
-        )
+        today_date = datetime.date.today()
+        filtered_df = df_sales
+
+        if filter_option == "اليوم الحالي":
+            filtered_df = df_sales[df_sales["date_only"] == today_date]
+        elif filter_option == "آخر 7 أيام":
+            start_date = today_date - datetime.timedelta(days=7)
+            filtered_df = df_sales[df_sales["date_only"] >= start_date]
+        elif filter_option == "آخر 30 يوماً":
+            start_date = today_date - datetime.timedelta(days=30)
+            filtered_df = df_sales[df_sales["date_only"] >= start_date]
+        elif filter_option == "تاريخ مخصص":
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                from_d = st.date_input("من تاريخ:", value=today_date - datetime.timedelta(days=7))
+            with col_d2:
+                to_d = st.date_input("إلى تاريخ:", value=today_date)
+            filtered_df = df_sales[(df_sales["date_only"] >= from_d) & (df_sales["date_only"] <= to_d)]
+
+        if filtered_df.empty:
+            st.warning("⚠️ لا توجد مبيعات مسجلة ضمن النطاق الزمني المحدد.")
+        else:
+            # مؤشرات الأداء الرئيسية (KPIs)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("إجمالي المبيعات", f"{filtered_df['total_price'].sum():.2f} د.أ")
+            m2.metric("إجمالي الخصومات", f"{filtered_df['discount'].sum():.2f} د.أ")
+            m3.metric("صافي الأرباح", f"{filtered_df['net_profit'].sum():.2f} د.أ")
+            m4.metric("عدد الفواتير/العمليات", len(filtered_df))
+
+            st.divider()
+
+            # تحليلات تفصيلية
+            col_ch1, col_ch2 = st.columns(2)
+            
+            with col_ch1:
+                st.subheader("💳 المبيعات حسب طريقة الدفع")
+                payment_summary = filtered_df.groupby("payment_method")["total_price"].sum().reset_index()
+                payment_summary.columns = ["طريقة الدفع", "إجمالي المبلغ (د.أ)"]
+                st.dataframe(payment_summary, use_container_width=True, hide_index=True)
+
+            with col_ch2:
+                st.subheader("🏆 أفضل المنتجات مبيعاً")
+                top_products = filtered_df.groupby("product_name").agg({"quantity": "sum", "total_price": "sum"}).reset_index()
+                top_products.columns = ["اسم المنتج", "الكمية المباعة", "إجمالي المبيعات (د.أ)"]
+                top_products = top_products.sort_values(by="quantity", ascending=False)
+                st.dataframe(top_products, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("📈 رسم بياني لحركة المبيعات اليومية")
+            daily_chart_data = filtered_df.groupby("date_only")["total_price"].sum().reset_index()
+            daily_chart_data.columns = ["التاريخ", "المبيعات"]
+            daily_chart_data = daily_chart_data.set_index("التاريخ")
+            st.line_chart(daily_chart_data)
+
+            st.divider()
+            st.subheader("📋 سجل العمليات التفصيلي للفترة")
+            st.dataframe(filtered_df.drop(columns=["date_only"]), use_container_width=True, hide_index=True)
+
+            csv_data = filtered_df.drop(columns=["date_only"]).to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                "📥 تصدير التقرير المالي المصفى إلى CSV/Excel",
+                data=csv_data,
+                file_name=f"Report_AlHashemiah_{datetime.date.today()}.csv",
+                mime="text/csv",
+                type="primary",
+                use_container_width=True
+            )
 
 # ----------------------------------------------------
 # 8. سجل الأحداث والرقابة (Audit Log)
