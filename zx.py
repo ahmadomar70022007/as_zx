@@ -331,18 +331,29 @@ elif menu == "📊 سجل المبيعات والتقارير":
         
         col_excel, col_csv = st.columns(2)
         
-        # تصدير ملف Excel
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_sales.to_excel(writer, index=False, sheet_name='Sales_Report')
-        buffer.seek(0)
+        st.divider()
+        st.subheader("📥 تصدير التقارير المالية")
         
-        with col_excel:
+        # تصدير ملف CSV (يعمل دائماً بدون أي مكتبات إضافية)
+        csv_data = df_sales.to_csv(index=False).encode('utf-8-sig')
+        
+        col_csv, col_txt = st.columns(2)
+        
+        with col_csv:
             st.download_button(
-                label="📊 تصدير السجل كملف Excel (.xlsx)",
-                data=buffer,
-                file_name="Sales_Report_Mashaqa.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                label="📊 تصدير السجل كملف Excel / CSV (.csv)",
+                data=csv_data,
+                file_name="Sales_Report_Mashaqa.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        with col_txt:
+            st.download_button(
+                label="📄 تصدير السجل كملف نصي (.txt)",
+                data=df_sales.to_string(index=False),
+                file_name="Sales_Report_Mashaqa.txt",
+                mime="text/plain",
                 use_container_width=True
             )
             
