@@ -25,7 +25,12 @@ def init_db():
             name TEXT NOT NULL,
             category TEXT,
             price REAL NOT NULL,
-            stock INTEGER NOT NULL
+            cost_price REAL DEFAULT 0,
+            stock INTEGER NOT NULL,
+            barcode TEXT,
+            supplier TEXT,
+            expiry_date TEXT,
+            min_alert INTEGER DEFAULT 5
         )
     ''')
     cursor.execute('''
@@ -44,24 +49,39 @@ def init_db():
     
     # التحديث التلقائي لأعمدة الجداول
     cursor.execute("PRAGMA table_info(sales)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'discount' not in columns:
+    sales_cols = [column[1] for column in cursor.fetchall()]
+    if 'discount' not in sales_cols:
         cursor.execute("ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0")
-    if 'payment_method' not in columns:
+    if 'payment_method' not in sales_cols:
         cursor.execute("ALTER TABLE sales ADD COLUMN payment_method TEXT DEFAULT 'Cash'")
-    if 'customer_name' not in columns:
+    if 'customer_name' not in sales_cols:
         cursor.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT DEFAULT 'عميل نقدي'")
-    if 'customer_phone' not in columns:
+    if 'customer_phone' not in sales_cols:
         cursor.execute("ALTER TABLE sales ADD COLUMN customer_phone TEXT DEFAULT '-'")
+
+    cursor.execute("PRAGMA table_info(products)")
+    prod_cols = [column[1] for column in cursor.fetchall()]
+    if 'cost_price' not in prod_cols:
+        cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0")
+    if 'barcode' not in prod_cols:
+        cursor.execute("ALTER TABLE products ADD COLUMN barcode TEXT DEFAULT '-'")
+    if 'supplier' not in prod_cols:
+        cursor.execute("ALTER TABLE products ADD COLUMN supplier TEXT DEFAULT '-'")
+    if 'expiry_date' not in prod_cols:
+        cursor.execute("ALTER TABLE products ADD COLUMN expiry_date TEXT DEFAULT '-'")
+    if 'min_alert' not in prod_cols:
+        cursor.execute("ALTER TABLE products ADD COLUMN min_alert INTEGER DEFAULT 5")
         
     conn.commit()
     conn.close()
 
-def add_product(name, category, price, stock):
+def add_product(name, category, price, cost_price, stock, barcode, supplier, expiry_date, min_alert):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)",
-                   (name, category, price, stock))
+    cursor.execute('''
+        INSERT INTO products (name, category, price, cost_price, stock, barcode, supplier, expiry_date, min_alert) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (name, category, price, cost_price, stock, barcode, supplier, expiry_date, min_alert))
     conn.commit()
     conn.close()
 
@@ -71,11 +91,14 @@ def get_products():
     conn.close()
     return df
 
-def update_product(prod_id, name, category, price, stock):
+def update_product(prod_id, name, category, price, cost_price, stock, barcode, supplier, expiry_date, min_alert):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE products SET name=?, category=?, price=?, stock=? WHERE id=?",
-                   (name, category, price, stock, int(prod_id)))
+    cursor.execute('''
+        UPDATE products 
+        SET name=?, category=?, price=?, cost_price=?, stock=?, barcode=?, supplier=?, expiry_date=?, min_alert=? 
+        WHERE id=?
+    ''', (name, category, price, cost_price, stock, barcode, supplier, expiry_date, min_alert, int(prod_id)))
     conn.commit()
     conn.close()
 
@@ -203,7 +226,7 @@ if st.session_state["user_role"] == "Admin":
         "🚨 تنبيهات النقص المتقدمة", 
         "💳 سجل الذمم والديون المطور",
         "🔄 استرجاع المبيعات المطور", 
-        "📦 إدارة المخزون", 
+        "📦 إدارة المخزون المطور", 
         "🏷️ طباعة بطاقات الأسعار",
         "📊 السجل والتقارير المتقدمة",
         "⚙️ النسخ الاحتياطي والنظام"
@@ -227,9 +250,13 @@ if menu == "🏪 كاشير المبيعات المطور":
         
         with col_products:
             st.subheader("📦 المنتجات المتاحة")
-            search_q = st.text_input("🔍 بحث سريع عن منتج بالاسم أو التصنيف...", key="pos_search")
+            search_q = st.text_input("🔍 بحث سريع عن منتج بالاسم، التصنيف، أو الباركود...", key="pos_search")
             if search_q:
-                filtered_prods = df_products[df_products["name"].str.contains(search_q, case=False, na=False) | df_products["category"].str.contains(search_q, case=False, na=False)]
+                filtered_prods = df_products[
+                    df_products["name"].str.contains(search_q, case=False, na=False) | 
+                    df_products["category"].str.contains(search_q, case=False, na=False) |
+                    df_products["barcode"].astype(str).str.contains(search_q, case=False, na=False)
+                ]
             else:
                 filtered_prods = df_products
                 
@@ -238,13 +265,14 @@ if menu == "🏪 كاشير المبيعات المطور":
             p_data = df_products[df_products["name"] == selected_p_name].iloc[0]
             
             m1, m2, m3 = st.columns(3)
-            m1.metric("💰 سعر القطعة", f"{p_data['price']:.2f} د.أ")
+            m1.metric("💰 سعر البيع", f"{p_data['price']:.2f} د.أ")
             m2.metric("📦 المتوفر بالمخزن", f"{p_data['stock']} قطعة")
             
+            min_thresh = int(p_data['min_alert']) if p_data['min_alert'] else 5
             if p_data['stock'] == 0:
                 m3.metric("الحالة", "❌ نافد", delta_color="inverse")
-            elif p_data['stock'] <= 5:
-                m3.metric("الحالة", "⚠️ منخفض", delta_color="off")
+            elif p_data['stock'] <= min_thresh:
+                m3.metric("الحالة", "⚠️ منخفض جداً", delta_color="off")
             else:
                 m3.metric("الحالة", "✅ ممتاز")
 
@@ -268,7 +296,7 @@ if menu == "🏪 كاشير المبيعات المطور":
 
             st.write("---")
             st.subheader("📋 جدول استعراض المخزون")
-            st.dataframe(filtered_prods[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
+            st.dataframe(filtered_prods[["id", "barcode", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
 
         with col_cart:
             st.subheader("🛒 سلة الفاتورة الحالية")
@@ -366,33 +394,29 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
     if df_products.empty:
         st.info("💡 لا توجد منتجات بالمخزن حالياً.")
     else:
-        col_ctrl1, col_ctrl2 = st.columns([2, 1])
-        with col_ctrl1:
-            threshold = st.slider("⚙️ حدد الكمية الحرجة للتنبيه (الحد الأدنى):", min_value=1, max_value=30, value=5)
-        
         out_of_stock = df_products[df_products["stock"] == 0]
-        low_stock = df_products[(df_products["stock"] > 0) & (df_products["stock"] <= threshold)]
-        all_alert_products = df_products[df_products["stock"] <= threshold]
+        low_stock = df_products[(df_products["stock"] > 0) & (df_products["stock"] <= df_products["min_alert"])]
+        all_alert_products = df_products[df_products["stock"] <= df_products["min_alert"]]
 
         ind1, ind2, ind3 = st.columns(3)
         ind1.metric("🔴 منتجات نافدة تماماً", f"{len(out_of_stock)} منتج", delta_color="inverse")
-        ind2.metric("🟡 منتجات منخفضة", f"{len(low_stock)} منتج", delta_color="off")
+        ind2.metric("🟡 منتجات أوشكت على النفاد", f"{len(low_stock)} منتج", delta_color="off")
         ind3.metric("📦 مجموع المنتجات للتزويد", f"{len(all_alert_products)} منتج")
 
         st.divider()
 
         if all_alert_products.empty:
             st.balloons()
-            st.success("🎉 ممتاز جداً! جميع المنتجات في المخزن متوفرة بكميات كافية وأعلى من حد التنبيه.")
+            st.success("🎉 ممتاز جداً! جميع المنتجات في المخزن متوفرة بكميات كافية وأعلى من الحدود الدنيا للإنذار.")
         else:
             if not out_of_stock.empty:
                 st.error("🚨 **منتجات نافدة تماماً من المخزن (0 قطعة):**")
-                st.dataframe(out_of_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
+                st.dataframe(out_of_stock[["id", "barcode", "name", "category", "price", "stock", "supplier"]], use_container_width=True, hide_index=True)
                 st.write("---")
 
             if not low_stock.empty:
-                st.warning(f"⚠️ **منتجات أوشكت على النفاد (تتطلب طلبية جديدة):**")
-                st.dataframe(low_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
+                st.warning(f"⚠️ **منتجات منخفضة (تتطلب شحنة جديدة):**")
+                st.dataframe(low_stock[["id", "barcode", "name", "category", "price", "stock", "min_alert", "supplier"]], use_container_width=True, hide_index=True)
                 st.write("---")
 
             st.subheader("⚡ إعادة تزويد الشحنات بنقرة واحدة (Quick Restock)")
@@ -411,7 +435,7 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
                     st.rerun()
 
             st.write("---")
-            reorder_csv = all_alert_products[["id", "name", "category", "stock"]].to_csv(index=False).encode('utf-8-sig')
+            reorder_csv = all_alert_products[["id", "barcode", "name", "category", "stock", "min_alert", "supplier"]].to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 تنزيل قائمة الطلبيات للموردين (.csv)", data=reorder_csv, file_name="Reorder_Stock_List.csv", mime="text/csv", type="secondary")
 
 # ----------------------------------------------------
@@ -521,7 +545,7 @@ elif menu == "💳 سجل الذمم والديون المطور":
                 st.info("قم بإجراء عملية تسديد لعرض سند القبض هنا.")
 
 # ----------------------------------------------------
-# 4. قسم استرجاع المبيعات المطور (شامل لجميع التحسينات)
+# 4. قسم استرجاع المبيعات المطور
 # ----------------------------------------------------
 elif menu == "🔄 استرجاع المبيعات المطور":
     st.header("🔄 قسم إدارة المرتجعات والاسترجاع المتقدم")
@@ -530,12 +554,10 @@ elif menu == "🔄 استرجاع المبيعات المطور":
     if df_sales.empty:
         st.info("💡 لا توجد عمليات بيع مسجلة حالياً في النظام.")
     else:
-        # فلترة وبحث
         col_search1, col_search2 = st.columns([2, 1])
         with col_search1:
             search_refund = st.text_input("🔍 بحث عن فاتورة لمرتجع (برقم الفاتورة، اسم الزبون، أو رقم الهاتف):")
         
-        # تجميع الفواتير برقم الفاتورة / العميل / التاريخ
         df_sales['date_dt'] = pd.to_datetime(df_sales['date'])
         
         if search_refund:
@@ -550,7 +572,6 @@ elif menu == "🔄 استرجاع المبيعات المطور":
 
         st.subheader("📑 سجل الفواتير المتاحة بالكامل")
         
-        # عرض ملخص الفواتير المتاحة
         invoices_summary = df_matching_sales.groupby("id").agg({
             "customer_name": "first",
             "customer_phone": "first",
@@ -575,20 +596,15 @@ elif menu == "🔄 استرجاع المبيعات المطور":
         )
 
         st.divider()
-
-        # نافذة اختيار الفاتورة ومعاينة محتوياتها بالكامل
         st.subheader("🔍 معاينة الفاتورة الكاملة وإجراء المرتجع")
         
         if invoices_summary.empty:
             st.warning("⚠️ لا توجد فواتير تطابق البحث.")
         else:
             selected_inv_id = st.selectbox("🎯 اختر رقم الفاتورة لاستعراض كافة مشترياتها وتنفيذ الإرجاع:", invoices_summary["id"].tolist())
-            
-            # جلب كافة محتويات المشتريات داخل هذه الفاتورة
             invoice_items = df_sales[df_sales["id"] == selected_inv_id]
             inv_header = invoice_items.iloc[0]
             
-            # حساب المهلة الزمنية (14 يوماً)
             inv_date = inv_header["date_dt"]
             days_passed = (datetime.datetime.now() - inv_date).days
             is_overdue = days_passed > 14
@@ -617,7 +633,6 @@ elif menu == "🔄 استرجاع المبيعات المطور":
 
             st.divider()
 
-            # إعدادات عملية الاسترجاع للمنتج المSelected
             col_ref1, col_ref2 = st.columns([1.2, 1], gap="large")
             
             with col_ref1:
@@ -627,7 +642,6 @@ elif menu == "🔄 استرجاع المبيعات المطور":
                 
                 unit_price = refund_item_row["total_price"] / refund_item_row["quantity"] if refund_item_row["quantity"] > 0 else 0
 
-                # 1. سبب الإرجاع
                 return_reason = st.selectbox("📌 سبب إرجاع المنتج:", [
                     "خطأ في الشراء / تغيير رأي العميل",
                     "بضاعة تالفة / عيب تصنيع",
@@ -635,24 +649,20 @@ elif menu == "🔄 استرجاع المبيعات المطور":
                     "عدم تطابق المواصفات"
                 ])
 
-                # 2. تحديد الكمية المسترجعة
                 max_q_refund = int(refund_item_row['quantity'])
                 qty_to_refund = st.number_input("حدد عدد القطع المراد إرجاعها:", min_value=1, max_value=max_q_refund, value=1)
                 refund_cash_amount = qty_to_refund * unit_price
                 is_full_refund = (qty_to_refund == max_q_refund)
 
-                # 3. توضيح آلية الاسترداد (تسوية الآجل أو إرجاع نقدي)
                 is_credit_sale = "آجل" in str(inv_header['payment_method'])
                 if is_credit_sale:
                     st.info(f"💡 هذه الفاتورة مدفوعة بالأصل **(آجل / ذمم)**. سيتم **خصم مبلغ ({refund_cash_amount:.2f} د.أ)** تلقائياً من حساب الدين القائم على العميل.")
                 else:
                     st.markdown(f"💵 **المبلغ المسترد للزبون نقداً:** <span style='color:#ef4444; font-size:20px; font-weight:bold;'>{refund_cash_amount:.2f} د.أ</span>", unsafe_allow_html=True)
 
-                # 4. خيار إعادة القطع للمخزون تلقائي حسب السبب
                 default_restock = False if ("تالفة" in return_reason or "الصلاحية" in return_reason) else True
                 restock_choice = st.checkbox("🔄 إعادة القطع المسترجعة للمخزون؟", value=default_restock)
 
-                # 5. طلب صلاحية Admin إذا لزم الأمر
                 admin_authorized = True
                 if is_overdue or st.session_state["user_role"] != "Admin":
                     st.write("---")
@@ -683,7 +693,6 @@ elif menu == "🔄 استرجاع المبيعات المطور":
                         else:
                             st.warning("⚠️ لم يتم إعادة القطع للمخزون (تم تسجيلها كبضاعة تالفة/منتهية الصلاحية).")
 
-                        # إعداد إيصال المرتجع
                         now_ref_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         refund_receipt_text = f"""
 ========================================
@@ -717,48 +726,210 @@ elif menu == "🔄 استرجاع المبيعات المطور":
                     st.info("قم بإجراء عملية إرجاع لعرض المعاينة وطباعتها هنا.")
 
 # ----------------------------------------------------
-# 5. إدارة المخزون
+# 5. قسم إدارة المخزون المطور (تحديث شامل)
 # ----------------------------------------------------
-elif menu == "📦 إدارة المخزون":
-    st.header("📦 إدارة المنتجات والمخزون")
-    tab_add, tab_edit_delete = st.tabs(["➕ إضافة منتج جديد", "✏️ تعديل أو حذف منتج"])
+elif menu == "📦 إدارة المخزون المطور":
+    st.header("📦 إدارة المخزون والمنتجات المتكاملة")
     
-    with tab_add:
-        with st.form("add_product_form", clear_on_submit=True):
-            name = st.text_input("اسم المنتج")
-            category = st.text_input("التصنيف")
-            price = st.number_input("السعر (د.أ)", min_value=0.0, format="%.2f")
-            stock = st.number_input("الكمية المتاحة", min_value=0, step=1)
-            submit = st.form_submit_button("إضافة المنتج إلى المخزن", type="primary")
-            if submit and name:
-                add_product(name, category, price, stock)
-                st.success("تمت إضافة المنتج بنجاح!")
-                st.rerun()
+    tab_overview, tab_add, tab_edit_delete, tab_import_export, tab_barcode = st.tabs([
+        "📋 جرد المخزون العام", 
+        "➕ إضافة منتج جديد", 
+        "✏️ تعديل / حذف منتج", 
+        "📥 استيراد وتصدير (CSV)",
+        "📊 مولد الباركود"
+    ])
+    
+    # 1. جرد المخزون العام
+    with tab_overview:
+        df_p = get_products()
+        if df_p.empty:
+            st.info("💡 لا توجد منتجات بالمخزن حالياً.")
+        else:
+            st.subheader("📊 ملخص أحجام المخزون والماليات")
+            total_items_count = len(df_p)
+            total_stock_qty = df_p["stock"].sum()
+            inventory_cost_value = (df_p["stock"] * df_p["cost_price"]).sum()
+            inventory_sale_value = (df_p["stock"] * df_p["price"]).sum()
+            expected_profit = inventory_sale_value - inventory_cost_value
 
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("📦 عدد الأصناف", f"{total_items_count} صنف")
+            k2.metric("🔢 مجموع القطع", f"{total_stock_qty} قطعة")
+            k3.metric("💰 القيمة بسعر التكلفة", f"{inventory_cost_value:.2f} د.أ")
+            k4.metric("📈 الأرباح المتوقعة", f"{expected_profit:.2f} د.أ")
+
+            st.write("---")
+            search_inv = st.text_input("🔍 بحث وتصفية السجل (بالاسم، التصنيف، المورد، أو الباركود):", key="search_inv_tab")
+            if search_inv:
+                filtered_df = df_p[
+                    df_p["name"].str.contains(search_inv, case=False, na=False) |
+                    df_p["category"].str.contains(search_inv, case=False, na=False) |
+                    df_p["supplier"].str.contains(search_inv, case=False, na=False) |
+                    df_p["barcode"].astype(str).str.contains(search_inv, case=False, na=False)
+                ]
+            else:
+                filtered_df = df_p
+
+            st.dataframe(
+                filtered_df[[
+                    "id", "barcode", "name", "category", "price", "cost_price", 
+                    "stock", "min_alert", "supplier", "expiry_date"
+                ]],
+                column_config={
+                    "id": "المُعرف",
+                    "barcode": "الباركود/SKU",
+                    "name": "اسم المنتج",
+                    "category": "التصنيف",
+                    "price": st.column_config.NumberColumn("سعر البيع", format="%.2f د.أ"),
+                    "cost_price": st.column_config.NumberColumn("سعر التكلفة", format="%.2f د.أ"),
+                    "stock": "الكمية المتاحة",
+                    "min_alert": "حد الإنذار",
+                    "supplier": "المورد",
+                    "expiry_date": "تاريخ الصلاحية"
+                },
+                use_container_width=True, hide_index=True
+            )
+
+    # 2. إضافة منتج جديد
+    with tab_add:
+        st.subheader("➕ إضافة صنف جديد للمخزن")
+        with st.form("add_product_form_adv", clear_on_submit=True):
+            col_a1, col_a2 = st.columns(2)
+            with col_a1:
+                name = st.text_input("اسم المنتج *", placeholder="مثال: شوكولاتة جواهر 500غم")
+                category = st.text_input("التصنيف / القسم", placeholder="مثال: حلويات / ألبان")
+                price = st.number_input("سعر البيع للزبون (د.أ) *", min_value=0.0, format="%.2f")
+                cost_price = st.number_input("سعر التكلفة / الشراء (د.أ)", min_value=0.0, format="%.2f")
+                stock = st.number_input("الكمية الأولية بالمخزن *", min_value=0, step=1, value=10)
+            
+            with col_a2:
+                barcode = st.text_input("الباروكود / SKU", value=f"629{datetime.datetime.now().strftime('%M%S%f')[:6]}")
+                supplier = st.text_input("اسم المورد / الشركة", placeholder="مثال: شركة النبلاء للتوزيع")
+                expiry_date = st.date_input("تاريخ انتهاء الصلاحية (اختياري)", value=datetime.date.today() + datetime.timedelta(days=365))
+                min_alert = st.number_input("حد الإنذار للنقص الخاص بالمنتج", min_value=1, value=5)
+
+            submit = st.form_submit_button("✨ حفظ وإضافة المنتج للمخزن", type="primary", use_container_width=True)
+            if submit:
+                if not name:
+                    st.error("❌ يرجى إدخال اسم المنتج على الأقل.")
+                else:
+                    add_product(name, category, price, cost_price, stock, barcode, supplier, str(expiry_date), min_alert)
+                    st.success(f"✅ تم إضافة المنتج [{name}] للمخزن بنجاح!")
+                    st.rerun()
+
+    # 3. تعديل أو حذف منتج
     with tab_edit_delete:
         df_products = get_products()
-        if not df_products.empty:
-            prod_to_edit = st.selectbox("اختر المنتج لتعديله أو حذفه:", df_products["name"].tolist(), key="edit_select")
+        if df_products.empty:
+            st.info("لا توجد منتجات بالمخزن للتعديل عليها.")
+        else:
+            st.subheader("✏️ تعديل بيانات صنف موجود")
+            prod_to_edit = st.selectbox("اختر المنتج المراد تعديله أو حذفه:", df_products["name"].tolist(), key="edit_select_adv")
             selected_row = df_products[df_products["name"] == prod_to_edit].iloc[0]
-            col_edit1, col_edit2 = st.columns(2)
-            with col_edit1:
-                new_name = st.text_input("الاسم الجديد", value=selected_row["name"])
-                new_cat = st.text_input("التصنيف الجديد", value=selected_row["category"])
-                new_price = st.number_input("السعر الجديد", value=float(selected_row["price"]))
-                new_stock = st.number_input("الكمية الجديدة", value=int(selected_row["stock"]))
-                if st.button("💾 تحديث البيانات", use_container_width=True):
-                    update_product(selected_row["id"], new_name, new_cat, new_price, new_stock)
-                    st.success("تم التحديث بنجاح!")
-                    st.rerun()
-            with col_edit2:
-                st.write("---")
-                if st.button("❌ حذف المنتج نهائياً", type="primary", use_container_width=True):
-                    delete_product(selected_row["id"])
-                    st.success("تم الحذف بنجاح!")
+            
+            with st.form("edit_prod_form"):
+                e_col1, e_col2 = st.columns(2)
+                with e_col1:
+                    new_name = st.text_input("اسم المنتج", value=selected_row["name"])
+                    new_cat = st.text_input("التصنيف", value=str(selected_row["category"]))
+                    new_price = st.number_input("سعر البيع (د.أ)", value=float(selected_row["price"]))
+                    new_cost = st.number_input("سعر التكلفة (د.أ)", value=float(selected_row["cost_price"]) if selected_row["cost_price"] else 0.0)
+                    new_stock = st.number_input("الكمية المتوفرة بالمخزن", value=int(selected_row["stock"]))
+
+                with e_col2:
+                    new_barcode = st.text_input("الباركود / SKU", value=str(selected_row["barcode"]))
+                    new_supplier = st.text_input("المورد", value=str(selected_row["supplier"]))
+                    new_exp = st.text_input("تاريخ انتهاء الصلاحية", value=str(selected_row["expiry_date"]))
+                    new_alert = st.number_input("حد أدنى للإنذار", value=int(selected_row["min_alert"]) if selected_row["min_alert"] else 5)
+
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    btn_update = st.form_submit_button("💾 حفظ التحديثات", type="primary", use_container_width=True)
+                with col_btn2:
+                    btn_delete = st.form_submit_button("❌ حذف المنتج نهائياً", use_container_width=True)
+
+                if btn_update:
+                    update_product(
+                        selected_row["id"], new_name, new_cat, new_price, 
+                        new_cost, new_stock, new_barcode, new_supplier, new_exp, new_alert
+                    )
+                    st.success("✅ تم تحديث بيانات المنتج بنجاح!")
                     st.rerun()
 
-    st.divider()
-    st.dataframe(get_products(), use_container_width=True)
+                if btn_delete:
+                    delete_product(selected_row["id"])
+                    st.success("✅ تم حذف المنتج نهائياً من قاعدة البيانات.")
+                    st.rerun()
+
+    # 4. استيراد وتصدير الشحنات (CSV / Excel)
+    with tab_import_export:
+        st.subheader("📥 استيراد وتصدير بيانات المخزون دفعة واحدة")
+        col_imp, col_exp = st.columns(2, gap="large")
+
+        with col_imp:
+            st.markdown("##### 📤 استيراد شحنة جديدة من ملف CSV")
+            uploaded_file = st.file_uploader("قم برفع ملف البيانات (.csv)", type=["csv"])
+            if uploaded_file is not None:
+                try:
+                    import_df = pd.read_csv(uploaded_file)
+                    st.write("معاينة البيانات المراد إدراجها:")
+                    st.dataframe(import_df.head(), use_container_width=True)
+                    
+                    if st.button("✨ إدراج كافة الشحنة إلى المخزن الآن", type="primary"):
+                        for _, r in import_df.iterrows():
+                            add_product(
+                                name=r.get("name", "منتج مستورد"),
+                                category=r.get("category", "عام"),
+                                price=float(r.get("price", 0.0)),
+                                cost_price=float(r.get("cost_price", 0.0)),
+                                stock=int(r.get("stock", 1)),
+                                barcode=str(r.get("barcode", "-")),
+                                supplier=str(r.get("supplier", "-")),
+                                expiry_date=str(r.get("expiry_date", "-")),
+                                min_alert=int(r.get("min_alert", 5))
+                            )
+                        st.success("✅ تم استيراد كافة المنتجات بنجاح إلى قاعدة البيانات!")
+                        st.rerun()
+                except Exception as ex:
+                    st.error(f"❌ حدث خطأ أثناء قراءة الملف: {ex}")
+
+        with col_exp:
+            st.markdown("##### 📥 تصدير جرد المخزون الحالي")
+            df_curr = get_products()
+            if not df_curr.empty:
+                csv_bytes = df_curr.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    "📊 تنزيل ملف المخزون الكامل (.csv)", 
+                    data=csv_bytes, 
+                    file_name=f"Full_Inventory_{datetime.date.today()}.csv", 
+                    mime="text/csv", 
+                    use_container_width=True
+                )
+
+    # 5. مولد ملصقات الباركود
+    with tab_barcode:
+        st.subheader("📊 مولد ملصقات الشفرة الخيطية والبارمود (Barcode Generator)")
+        df_products = get_products()
+        if not df_products.empty:
+            b_prod = st.selectbox("اختر المنتج لتوليد باركوده:", df_products["name"].tolist(), key="select_barcode_prod")
+            b_data = df_products[df_products["name"] == b_prod].iloc[0]
+
+            st.write("---")
+            bc_html = f"""
+            <div style="border: 2px solid #f59e0b; padding: 15px; border-radius: 10px; width: 280px; text-align: center; background-color: #111827; margin: auto;">
+                <h4 style="color: #f59e0b; margin: 0;">👑 متاجر المشاقبة</h4>
+                <p style="color: #ffffff; font-weight: bold; margin: 5px 0;">{b_data['name']}</p>
+                <div style="background-color: #ffffff; padding: 10px; margin: 10px 0; border-radius: 5px;">
+                    <span style="font-family: 'Courier New', monospace; font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #000000;">
+                    |||| | ||||| | ||| ||
+                    </span>
+                    <br>
+                    <span style="font-family: monospace; font-size: 14px; color: #000000;">{b_data['barcode']}</span>
+                </div>
+                <h3 style="color: #10b981; margin: 5px 0;">{b_data['price']:.2f} د.أ</h3>
+            </div>
+            """
+            st.markdown(bc_html, unsafe_allow_html=True)
 
 # ----------------------------------------------------
 # 6. طباعة بطاقات الأسعار والملصقات
