@@ -957,6 +957,100 @@ elif menu == "🏷️ طباعة بطاقات الأسعار":
         with col_opt3:
             tag_size = st.radio("📐 حجم البطاقة:", ["صغير للرفوف (Small)", "كبير للملصقات (Large)"], horizontal=True)
 
+        card_width = "380px" if "كبير" in tag_size else "280px"
+        font_size_price = "42px" if "كبير" in tag_size else "32px"
+
+        st.divider()
+        st.subheader("🖼️ معاينة البطاقة قبل الطباعة")
+
+        p_name = prod_data['name']
+        p_cat = prod_data['category']
+        p_price = f"{prod_data['price']:.2f}"
+        p_code = prod_data['barcode']
+        p_id = prod_data['id']
+
+        # 1. القالب الذهبي الفاخر
+        if "الذهبي" in tag_style:
+            tag_html = f"""
+            <div style="border: 2px solid #d97706; background: #111827; padding: 16px; border-radius: 14px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: white;">
+                <div style="border-bottom: 1px solid #374151; padding-bottom: 6px; margin-bottom: 10px;">
+                    <span style="color: #f59e0b; font-weight: bold; font-size: 14px;">👑 متاجر المشاقبة</span>
+                </div>
+                <h3 style="color: #ffffff; margin: 6px 0; font-size: 20px;">{p_name}</h3>
+                <p style="color: #9ca3af; font-size: 12px; margin: 0 0 10px 0;">التصنيف: {p_cat}</p>
+                <div style="background: rgba(245, 158, 11, 0.15); border: 1px dashed #f59e0b; padding: 8px; border-radius: 10px; margin: 10px 0;">
+                    <span style="color: #10b981; font-size: {font_size_price}; font-weight: bold;">{p_price}</span>
+                    <span style="color: #10b981; font-size: 16px; font-weight: bold;"> د.أ</span>
+                </div>
+                <div style="font-size: 11px; color: #9ca3af; margin-top: 8px;">
+                    الباركود: {p_code} | المعرف: #{p_id}
+                </div>
+            </div>
+            """
+
+        # 2. قالب العروض والتخفيضات
+        elif "العروض" in tag_style:
+            tag_html = f"""
+            <div style="border: 3px solid #ef4444; background: #ffffff; padding: 16px; border-radius: 14px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: #111827;">
+                <div style="background-color: #ef4444; color: white; font-weight: bold; font-size: 13px; padding: 4px 0; border-radius: 6px; margin-bottom: 8px;">
+                    🔥 عرض خاص 🔥
+                </div>
+                <h3 style="color: #111827; margin: 6px 0; font-size: 20px;">{p_name}</h3>
+                <p style="color: #6b7280; font-size: 12px; margin: 0 0 8px 0;">👑 متاجر المشاقبة</p>
+                <div style="background-color: #fef2f2; border: 2px solid #fca5a5; padding: 8px; border-radius: 10px; margin: 8px 0;">
+                    <span style="color: #dc2626; font-size: {font_size_price}; font-weight: bold;">{p_price}</span>
+                    <span style="color: #dc2626; font-size: 16px; font-weight: bold;"> د.أ</span>
+                </div>
+                <div style="font-size: 11px; color: #9ca3af; margin-top: 6px;">
+                    كود: {p_code}
+                </div>
+            </div>
+            """
+
+        # 3. القالب العصري البسيط
+        else:
+            tag_html = f"""
+            <div style="border: 1px solid #d1d5db; background: #f9fafb; padding: 16px; border-radius: 12px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: #111827;">
+                <h4 style="color: #4b5563; margin: 0 0 4px 0; font-size: 13px;">👑 متاجر المشاقبة</h4>
+                <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 6px 0;">
+                <h3 style="color: #1f2937; margin: 6px 0; font-size: 19px;">{p_name}</h3>
+                <h2 style="color: #059669; font-size: {font_size_price}; margin: 8px 0; font-weight: bold;">
+                    {p_price} <span style="font-size:15px;">د.أ</span>
+                </h2>
+                <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                    رمز المنتج: {p_code}
+                </div>
+            </div>
+            """
+
+        # عرض المعاينة
+        st.markdown(tag_html, unsafe_allow_html=True)
+        
+        st.write("---")
+        
+        print_code = f"""
+        <html>
+        <head>
+            <title>طباعة بطاقة - {p_name}</title>
+            <style>
+                body {{ display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: white; }}
+                @page {{ size: auto; margin: 0; }}
+            </style>
+        </head>
+        <body onload="window.print(); window.close();">
+            {tag_html}
+        </body>
+        </html>
+        """
+        
+        st.download_button(
+            label="🖨️ تنزيل بطاقة السعر لطباعتها (HTML)",
+            data=print_code,
+            file_name=f"PriceTag_{p_id}.html",
+            mime="text/html",
+            type="primary",
+            use_container_width=True
+        )
         # تحديد أبعاد الكرت بناءً على الحجم
         card_width = "380px" if "كبير" in tag_size else "280px"
         font_size_price = "46px" if "كبير" in tag_size else "34px"
