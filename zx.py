@@ -116,27 +116,39 @@ init_db()
 
 # --- إدارة الجلسة وتسجيل الدخول ---
 if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+    st.session_state["logged_in"] = False
 if "user_role" not in st.session_state:
-    st.session_state.user_role = None
+    st.session_state["user_role"] = None
 
-def login():
+def check_credentials(user, pwd):
+    user = user.strip().lower()
+    pwd = pwd.strip()
+    if user == "admin" and pwd == "admin123":
+        return "Admin"
+    elif user == "cashier" and pwd == "cashier123":
+        return "Cashier"
+    return None
+
+if not st.session_state["logged_in"]:
     st.markdown("<h2 style='text-align: center;'>🔒 تسجيل الدخول لنظام متاجر المشاقبة</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
+    
     with col2:
-        username = st.text_input("اسم المستخدم")
-        password = st.text_input("كلمة السر", type="password")
-        if st.button("دخول", type="primary", use_container_width=True):
-            if username.lower() == "admin" and password == "admin123":
-                st.session_state.logged_in = True
-                st.session_state.user_role = "Admin"
-                st.rerun()
-            elif username.lower() == "cashier" and password == "cashier123":
-                st.session_state.logged_in = True
-                st.session_state.user_role = "Cashier"
-                st.rerun()
-            else:
-                st.error("❌ بيانات الدخول غير صحيحة! (جرب admin / admin123 أو cashier / cashier123)")
+        with st.form("login_form_unique"):
+            username_input = st.text_input("اسم المستخدم")
+            password_input = st.text_input("كلمة السر", type="password")
+            submit = st.form_submit_button("دخول", type="primary", use_container_width=True)
+            
+            if submit:
+                role = check_credentials(username_input, password_input)
+                if role:
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_role"] = role
+                    st.success("✅ تم تسجيل الدخول بنجاح!")
+                    st.rerun()
+                else:
+                    st.error("❌ اسم المستخدم أو كلمة السر غير صحيحة")
+    st.stop()
 
 if not st.session_state.logged_in:
     login()
