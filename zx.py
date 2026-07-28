@@ -106,6 +106,16 @@ def record_sale(c_name, c_phone, product_id, product_name, quantity, discount_va
     conn.close()
     return sale_id
 
+def update_sale_debt(sale_id, new_total, is_paid=False):
+    conn = get_connection()
+    cursor = conn.cursor()
+    if is_paid:
+        cursor.execute("UPDATE sales SET total_price = 0, payment_method = 'نقداً (تم تسديد الدين)' WHERE id = ?", (sale_id,))
+    else:
+        cursor.execute("UPDATE sales SET total_price = ? WHERE id = ?", (new_total, sale_id))
+    conn.commit()
+    conn.close()
+
 def refund_sale(sale_id, product_name, quantity):
     conn = get_connection()
     cursor = conn.cursor()
@@ -179,7 +189,7 @@ if st.session_state["user_role"] == "Admin":
     menu_options = [
         "🏪 كاشير المبيعات المطور", 
         "🚨 تنبيهات النقص المتقدمة", 
-        "💳 سجل الذمم والديون",
+        "💳 سجل الذمم والديون المطور",
         "🔄 استرجاع المبيعات", 
         "📦 إدارة المخزون", 
         "🏷️ طباعة بطاقات الأسعار",
@@ -205,7 +215,6 @@ if menu == "🏪 كاشير المبيعات المطور":
         
         with col_products:
             st.subheader("📦 المنتجات المتاحة")
-            
             search_q = st.text_input("🔍 بحث سريع عن منتج بالاسم أو التصنيف...", key="pos_search")
             if search_q:
                 filtered_prods = df_products[df_products["name"].str.contains(search_q, case=False, na=False) | df_products["category"].str.contains(search_q, case=False, na=False)]
@@ -213,7 +222,6 @@ if menu == "🏪 كاشير المبيعات المطور":
                 filtered_prods = df_products
                 
             st.write("---")
-            
             selected_p_name = st.selectbox("🎯 اختر المنتج للتفاصيل والإضافة:", filtered_prods["name"].tolist(), key="select_prod_cart")
             p_data = df_products[df_products["name"] == selected_p_name].iloc[0]
             
@@ -252,7 +260,6 @@ if menu == "🏪 كاشير المبيعات المطور":
 
         with col_cart:
             st.subheader("🛒 سلة الفاتورة الحالية")
-            
             if not st.session_state["cart"]:
                 st.info("🛒 السلة فارغة حالياً. قم باختيار المنتجات وإضافتها السلة.")
             else:
@@ -272,11 +279,9 @@ if menu == "🏪 كاشير المبيعات المطور":
                 st.subheader("👤 بيانات الزبون وطريقة الدفع")
                 c_name = st.text_input("اسم الزبون:", value="عميل نقدي", key="cart_cname")
                 c_phone = st.text_input("رقم هاتف الزبون:", value="-", key="cart_cphone")
-                
                 pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
                 
                 raw_cart_total = sum(item["total"] for item in st.session_state["cart"])
-                
                 st.write("---")
                 st.subheader("🎟️ الخصم المطبق")
                 disc_type = st.radio("نوع الخصم:", ["بدون خصم", "نسبة (%)", "مبلغ (د.أ)"], horizontal=True, key="cart_disc_type")
@@ -313,7 +318,6 @@ if menu == "🏪 كاشير المبيعات المطور":
                         items_summary_txt += f"{item['name']} (x{item['qty']}) - {item['total']:.2f} د.أ\n"
                     
                     st.success("✅ تم إتمام وتخزين جميع عناصر الفاتورة بنجاح!")
-                    
                     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                     invoice_text = f"""
 ========================================
@@ -336,14 +340,12 @@ if menu == "🏪 كاشير المبيعات المطور":
 ========================================
     شكراً لتسوقكم معنا! نتمنى لكم يوماً سعيداً
                     """
-                    
                     st.text_area("📄 معاينة الإيصال الحراري:", invoice_text, height=270)
                     st.download_button("🖨️ تنزيل وطباعة الإيصال (TXT)", data=invoice_text, file_name=f"Receipt_{last_sale_id}.txt", mime="text/plain")
-                    
                     st.session_state["cart"] = []
 
 # ----------------------------------------------------
-# 2. قسم تنبيهات النقص المتقدمة المطور
+# 2. قسم تنبيهات النقص المتقدمة
 # ----------------------------------------------------
 elif menu == "🚨 تنبيهات النقص المتقدمة":
     st.header("🚨 مراقبة وإدارة تنبيهات المخزون المنخفض")
@@ -352,17 +354,14 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
     if df_products.empty:
         st.info("💡 لا توجد منتجات بالمخزن حالياً.")
     else:
-        # التحكم بحد التنبيه
         col_ctrl1, col_ctrl2 = st.columns([2, 1])
         with col_ctrl1:
             threshold = st.slider("⚙️ حدد الكمية الحرجة للتنبيه (الحد الأدنى):", min_value=1, max_value=30, value=5)
         
-        # تصفية البيانات
         out_of_stock = df_products[df_products["stock"] == 0]
         low_stock = df_products[(df_products["stock"] > 0) & (df_products["stock"] <= threshold)]
         all_alert_products = df_products[df_products["stock"] <= threshold]
 
-        # مؤشرات سريعة Top Indicators
         ind1, ind2, ind3 = st.columns(3)
         ind1.metric("🔴 منتجات نافدة تماماً", f"{len(out_of_stock)} منتج", delta_color="inverse")
         ind2.metric("🟡 منتجات منخفضة", f"{len(low_stock)} منتج", delta_color="off")
@@ -374,21 +373,17 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
             st.balloons()
             st.success("🎉 ممتاز جداً! جميع المنتجات في المخزن متوفرة بكميات كافية وأعلى من حد التنبيه.")
         else:
-            # 1. عرض المنتجات النافدة تماماً (إن وجدت)
             if not out_of_stock.empty:
                 st.error("🚨 **منتجات نافدة تماماً من المخزن (0 قطعة):**")
                 st.dataframe(out_of_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
                 st.write("---")
 
-            # 2. عرض المنتجات المنخفضة
             if not low_stock.empty:
                 st.warning(f"⚠️ **منتجات أوشكت على النفاد (تتطلب طلبية جديدة):**")
                 st.dataframe(low_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
                 st.write("---")
 
-            # 3. قسم إعادة التزويد والشحن السريع (Quick Restock Station)
             st.subheader("⚡ إعادة تزويد الشحنات بنقرة واحدة (Quick Restock)")
-            
             col_re1, col_re2, col_re3 = st.columns([2, 1, 1])
             with col_re1:
                 selected_alert_p = st.selectbox("اختر المنتج الناقص لشحنه فوراً:", all_alert_products["name"].tolist())
@@ -403,24 +398,119 @@ elif menu == "🚨 تنبيهات النقص المتقدمة":
                     st.success(f"✅ تم إضافة ({add_stock_qty}) قطعة إلى [{selected_alert_p}] بنجاح!")
                     st.rerun()
 
-            # 4. تصدير قائمة الطلبيات للموردين
             st.write("---")
             reorder_csv = all_alert_products[["id", "name", "category", "stock"]].to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 تنزيل قائمة الطلبيات للموردين (.csv)", data=reorder_csv, file_name="Reorder_Stock_List.csv", mime="text/csv", type="secondary")
 
 # ----------------------------------------------------
-# 3. سجل الذمم والديون
+# 3. قسم سجل الذمم والديون المطور المطور جداً
 # ----------------------------------------------------
-elif menu == "💳 سجل الذمم والديون":
-    st.header("💳 سجل المبيعات الآجلة والذمم")
+elif menu == "💳 سجل الذمم والديون المطور":
+    st.header("💳 نظام إدارة وتجميع الذمم وسداد الديون")
     df_sales = get_sales_history()
-    credit_sales = df_sales[df_sales["payment_method"].str.contains("آجل", na=False)]
+    credit_sales = df_sales[(df_sales["payment_method"].str.contains("آجل", na=False)) & (df_sales["total_price"] > 0)]
     
     if credit_sales.empty:
-        st.success("🎉 لا توجد ديون آحلة على الزبائن حالياً!")
+        st.balloons()
+        st.success("🎉 ممتاز! لا توجد أي ديون أو ذمم آحلة قائمة على الزبائن حالياً.")
     else:
-        st.warning(f"⚠️ إجمالي الديون القائمة: **{credit_sales['total_price'].sum():.2f} د.أ**")
-        st.dataframe(credit_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "date"]], use_container_width=True, hide_index=True)
+        # المؤشرات المالية
+        total_credit = credit_sales["total_price"].sum()
+        unique_debtors = credit_sales["customer_name"].nunique()
+        max_debt = credit_sales["total_price"].max()
+
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("💰 إجمالي الذمم القائمة", f"{total_credit:.2f} د.أ")
+        kpi2.metric("👥 عدد العملاء المدينين", f"{unique_debtors} عميل")
+        kpi3.metric("⚠️ أكبر دين مسجل", f"{max_debt:.2f} د.أ")
+
+        st.divider()
+
+        # البحث والفلترة
+        search_debtor = st.text_input("🔍 بحث عن عميل بالاسم أو رقم الهاتف:", key="debt_search")
+        if search_debtor:
+            filtered_credit = credit_sales[
+                credit_sales["customer_name"].str.contains(search_debtor, case=False, na=False) |
+                credit_sales["customer_phone"].str.contains(search_debtor, case=False, na=False)
+            ]
+        else:
+            filtered_credit = credit_sales
+
+        st.subheader("📋 قائمة الفواتير الآجلة غير المسددة")
+        st.dataframe(
+            filtered_credit[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "date"]],
+            column_config={
+                "id": "رقم الفاتورة",
+                "customer_name": "اسم العميل",
+                "customer_phone": "الهاتف",
+                "product_name": "المنتج",
+                "quantity": "الكمية",
+                "total_price": st.column_config.NumberColumn("المبلغ المستحق", format="%.2f د.أ"),
+                "date": "التاريخ"
+            },
+            use_container_width=True, hide_index=True
+        )
+
+        st.divider()
+
+        # محطة سداد الديون (Debt Settlement Station)
+        st.subheader("💵 محطة تسديد وسداد الذمم (Debt Payment)")
+        
+        col_pay1, col_pay2 = st.columns([1.2, 1], gap="large")
+        
+        with col_pay1:
+            sale_debt_id = st.selectbox("اختر رقم الفاتورة الآجلة للتسديد:", options=filtered_credit["id"].tolist())
+            selected_debt = filtered_credit[filtered_credit["id"] == sale_debt_id].iloc[0]
+            
+            st.info(f"👤 العميل: **{selected_debt['customer_name']}** | 📱 الهاتف: **{selected_debt['customer_phone']}**")
+            st.warning(f"📌 المنتج: **{selected_debt['product_name']}** | المبلغ المستحق: **{selected_debt['total_price']:.2f} د.أ**")
+            
+            pay_type = st.radio("نوع التسديد:", ["سداد كامل (إغلاق الذمة)", "سداد جزئي (دفعة من الدين)"], horizontal=True)
+            
+            if pay_type == "سداد جزئي (دفعة من الدين)":
+                paid_part = st.number_input("المبلغ المدفوع الآن (د.أ):", min_value=0.1, max_value=float(selected_debt['total_price']), value=float(selected_debt['total_price'] / 2))
+                rem_debt = selected_debt['total_price'] - paid_part
+                st.write(f"💵 المتبقي من الدين بعد الدفعة: **{rem_debt:.2f} د.أ**")
+            else:
+                paid_part = selected_debt['total_price']
+                rem_debt = 0.0
+
+            if st.button("✨ اعتماد وتأكيد عملية التسديد", type="primary", use_container_width=True):
+                if pay_type == "سداد كامل (إغلاق الذمة)":
+                    update_sale_debt(selected_debt['id'], 0, is_paid=True)
+                    st.success(f"✅ تم تسديد الفاتورة #{selected_debt['id']} بالكامل وتم إغلاق الذمة!")
+                else:
+                    update_sale_debt(selected_debt['id'], rem_debt, is_paid=False)
+                    st.success(f"✅ تم تسجيل دفعة بقيمة ({paid_part:.2f} د.أ) المتبقي الآن: ({rem_debt:.2f} د.أ)")
+
+                now_pay_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                pay_receipt = f"""
+========================================
+         👑 متاجر المشاقبة 👑
+      إيصال تسديد دين / سند قبض
+========================================
+التاريخ: {now_pay_str}
+رقم الفاتورة الأصلية: #{selected_debt['id']}
+اسم العميل: {selected_debt['customer_name']}
+رقم الهاتف: {selected_debt['customer_phone']}
+----------------------------------------
+المبلغ المدفوع الآن: {paid_part:.2f} د.أ
+المبلغ المتبقي ذمة: {rem_debt:.2f} د.أ
+----------------------------------------
+توقيع المستلم: __________________
+========================================
+        شكراً لالتزامكم بالتسديد!
+                """
+                st.session_state["last_pay_receipt"] = pay_receipt
+                st.rerun()
+
+        with col_pay2:
+            st.subheader("📄 معاينة سند القبض والإيصال")
+            if "last_pay_receipt" in st.session_state:
+                st.text_area("معاينة سند التسديد:", st.session_state["last_pay_receipt"], height=260)
+                st.download_button("🖨️ تنزيل سند القبض (TXT)", data=st.session_state["last_pay_receipt"], file_name=f"Debt_Receipt_{selected_debt['id']}.txt", mime="text/plain")
+            else:
+                st.info("قم بإجراء عملية تسديد لعرض سند القبض هنا.")
 
 # ----------------------------------------------------
 # 4. استرجاع المبيعات
