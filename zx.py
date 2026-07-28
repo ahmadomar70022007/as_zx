@@ -79,6 +79,13 @@ def update_product(prod_id, name, category, price, stock):
     conn.commit()
     conn.close()
 
+def quick_add_stock(prod_id, added_qty):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (added_qty, int(prod_id)))
+    conn.commit()
+    conn.close()
+
 def delete_product(prod_id):
     conn = get_connection()
     cursor = conn.cursor()
@@ -171,7 +178,7 @@ st.divider()
 if st.session_state["user_role"] == "Admin":
     menu_options = [
         "🏪 كاشير المبيعات المطور", 
-        "🚨 تنبيهات النقص", 
+        "🚨 تنبيهات النقص المتقدمة", 
         "💳 سجل الذمم والديون",
         "🔄 استرجاع المبيعات", 
         "📦 إدارة المخزون", 
@@ -185,7 +192,7 @@ else:
 menu = st.sidebar.radio("🔱 القائمة الرئيسية", menu_options)
 
 # ----------------------------------------------------
-# 1. قسم كاشير المبيعات المطور والمميز جداً
+# 1. قسم كاشير المبيعات المطور
 # ----------------------------------------------------
 if menu == "🏪 كاشير المبيعات المطور":
     st.header("🛒 نقطة البيع الذكية (Smart POS Cashier)")
@@ -196,7 +203,6 @@ if menu == "🏪 كاشير المبيعات المطور":
     else:
         col_products, col_cart = st.columns([1.4, 1], gap="large")
         
-        # --- القسم الأيسر: تصفح المنتجات والبحث السريع ---
         with col_products:
             st.subheader("📦 المنتجات المتاحة")
             
@@ -208,7 +214,6 @@ if menu == "🏪 كاشير المبيعات المطور":
                 
             st.write("---")
             
-            # اختيارات إضافة منتج إلى السلة
             selected_p_name = st.selectbox("🎯 اختر المنتج للتفاصيل والإضافة:", filtered_prods["name"].tolist(), key="select_prod_cart")
             p_data = df_products[df_products["name"] == selected_p_name].iloc[0]
             
@@ -223,7 +228,6 @@ if menu == "🏪 كاشير المبيعات المطور":
             else:
                 m3.metric("الحالة", "✅ ممتاز")
 
-            # شريط نسبة المخزون المتبقي
             stock_pct = min(1.0, float(p_data['stock']) / 50.0) if p_data['stock'] > 0 else 0.0
             st.caption("مؤشر نسبة المخزون المتاح:")
             st.progress(stock_pct)
@@ -232,7 +236,6 @@ if menu == "🏪 كاشير المبيعات المطور":
             add_qty = st.number_input("الكمية المراد إضافتها للسلة:", min_value=1, max_value=max_q, value=1, disabled=(p_data['stock'] == 0))
             
             if st.button("➕ إضافة المنتج إلى سلة المشتريات", type="primary", use_container_width=True, disabled=(p_data['stock'] == 0)):
-                # إضافة للسلة
                 st.session_state["cart"].append({
                     "id": p_data["id"],
                     "name": p_data["name"],
@@ -247,7 +250,6 @@ if menu == "🏪 كاشير المبيعات المطور":
             st.subheader("📋 جدول استعراض المخزون")
             st.dataframe(filtered_prods[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
 
-        # --- القسم الأيمن: سلة المشتريات والحسابات والطباعة ---
         with col_cart:
             st.subheader("🛒 سلة الفاتورة الحالية")
             
@@ -273,7 +275,6 @@ if menu == "🏪 كاشير المبيعات المطور":
                 
                 pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
                 
-                # حساب المبالغ والخصم
                 raw_cart_total = sum(item["total"] for item in st.session_state["cart"])
                 
                 st.write("---")
@@ -289,7 +290,6 @@ if menu == "🏪 كاشير المبيعات المطور":
 
                 final_cart_total = max(0.0, raw_cart_total - discount_val)
 
-                # حاسبة الباقي
                 if "نقداً" in pay_method:
                     p_col, c_col = st.columns(2)
                     with p_col:
@@ -305,7 +305,6 @@ if menu == "🏪 كاشير المبيعات المطور":
                 st.markdown(f"### 💳 صافي الفاتورة: <span style='color:#f59e0b;'>{final_cart_total:.2f} د.أ</span>", unsafe_allow_html=True)
 
                 if st.button("✨ اعتماد وإتمام الفاتورة وطباعتها", type="primary", use_container_width=True):
-                    # تسجيل المبيعات لكل المنتجات في السلة
                     last_sale_id = None
                     items_summary_txt = ""
                     for item in st.session_state["cart"]:
@@ -341,23 +340,73 @@ if menu == "🏪 كاشير المبيعات المطور":
                     st.text_area("📄 معاينة الإيصال الحراري:", invoice_text, height=270)
                     st.download_button("🖨️ تنزيل وطباعة الإيصال (TXT)", data=invoice_text, file_name=f"Receipt_{last_sale_id}.txt", mime="text/plain")
                     
-                    # تفريغ السلة بعد البيع
                     st.session_state["cart"] = []
 
 # ----------------------------------------------------
-# 2. تنبيهات النقص
+# 2. قسم تنبيهات النقص المتقدمة المطور
 # ----------------------------------------------------
-elif menu == "🚨 تنبيهات النقص":
-    st.header("🚨 نظام تنبيهات المخزون المنخفض")
+elif menu == "🚨 تنبيهات النقص المتقدمة":
+    st.header("🚨 مراقبة وإدارة تنبيهات المخزون المنخفض")
     df_products = get_products()
-    threshold = st.slider("حدد حد التنبيه للكميات المنخفضة:", min_value=1, max_value=20, value=5)
-    low_stock = df_products[df_products["stock"] <= threshold]
     
-    if low_stock.empty:
-        st.success("🎉 جميع المنتجات متوفرة بكميات ممتازة!")
+    if df_products.empty:
+        st.info("💡 لا توجد منتجات بالمخزن حالياً.")
     else:
-        st.error(f"⚠️ يوجد ({len(low_stock)}) منتجات أوشكت على النفاد:")
-        st.dataframe(low_stock[["id", "name", "category", "stock"]], use_container_width=True, hide_index=True)
+        # التحكم بحد التنبيه
+        col_ctrl1, col_ctrl2 = st.columns([2, 1])
+        with col_ctrl1:
+            threshold = st.slider("⚙️ حدد الكمية الحرجة للتنبيه (الحد الأدنى):", min_value=1, max_value=30, value=5)
+        
+        # تصفية البيانات
+        out_of_stock = df_products[df_products["stock"] == 0]
+        low_stock = df_products[(df_products["stock"] > 0) & (df_products["stock"] <= threshold)]
+        all_alert_products = df_products[df_products["stock"] <= threshold]
+
+        # مؤشرات سريعة Top Indicators
+        ind1, ind2, ind3 = st.columns(3)
+        ind1.metric("🔴 منتجات نافدة تماماً", f"{len(out_of_stock)} منتج", delta_color="inverse")
+        ind2.metric("🟡 منتجات منخفضة", f"{len(low_stock)} منتج", delta_color="off")
+        ind3.metric("📦 مجموع المنتجات للتزويد", f"{len(all_alert_products)} منتج")
+
+        st.divider()
+
+        if all_alert_products.empty:
+            st.balloons()
+            st.success("🎉 ممتاز جداً! جميع المنتجات في المخزن متوفرة بكميات كافية وأعلى من حد التنبيه.")
+        else:
+            # 1. عرض المنتجات النافدة تماماً (إن وجدت)
+            if not out_of_stock.empty:
+                st.error("🚨 **منتجات نافدة تماماً من المخزن (0 قطعة):**")
+                st.dataframe(out_of_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
+                st.write("---")
+
+            # 2. عرض المنتجات المنخفضة
+            if not low_stock.empty:
+                st.warning(f"⚠️ **منتجات أوشكت على النفاد (تتطلب طلبية جديدة):**")
+                st.dataframe(low_stock[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
+                st.write("---")
+
+            # 3. قسم إعادة التزويد والشحن السريع (Quick Restock Station)
+            st.subheader("⚡ إعادة تزويد الشحنات بنقرة واحدة (Quick Restock)")
+            
+            col_re1, col_re2, col_re3 = st.columns([2, 1, 1])
+            with col_re1:
+                selected_alert_p = st.selectbox("اختر المنتج الناقص لشحنه فوراً:", all_alert_products["name"].tolist())
+                selected_alert_info = df_products[df_products["name"] == selected_alert_p].iloc[0]
+            with col_re2:
+                add_stock_qty = st.number_input("الكمية المضافة للمخزن:", min_value=1, value=10, step=1)
+            with col_re3:
+                st.write(" ")
+                st.write(" ")
+                if st.button("➕ شحن المخزن الآن", type="primary", use_container_width=True):
+                    quick_add_stock(selected_alert_info["id"], add_stock_qty)
+                    st.success(f"✅ تم إضافة ({add_stock_qty}) قطعة إلى [{selected_alert_p}] بنجاح!")
+                    st.rerun()
+
+            # 4. تصدير قائمة الطلبيات للموردين
+            st.write("---")
+            reorder_csv = all_alert_products[["id", "name", "category", "stock"]].to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تنزيل قائمة الطلبيات للموردين (.csv)", data=reorder_csv, file_name="Reorder_Stock_List.csv", mime="text/csv", type="secondary")
 
 # ----------------------------------------------------
 # 3. سجل الذمم والديون
