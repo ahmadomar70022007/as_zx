@@ -120,11 +120,9 @@ def refund_sale_advanced(sale_id, product_name, qty_to_refund, refund_amount, re
     conn = get_connection()
     cursor = conn.cursor()
     
-    # 1. إرجاع الكمية للمخزون إذا اختار المستخدم ذلك
     if return_to_stock:
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (qty_to_refund, product_name))
     
-    # 2. معالجة الفاتورة (إلغاء كامل أم تحديث جزئي)
     if is_full_refund:
         cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
     else:
@@ -523,7 +521,7 @@ elif menu == "💳 سجل الذمم والديون المطور":
                 st.info("قم بإجراء عملية تسديد لعرض سند القبض هنا.")
 
 # ----------------------------------------------------
-# 4. قسم استرجاع المبيعات المطور المطور
+# 4. قسم استرجاع المبيعات المطور (شامل لجميع التحسينات)
 # ----------------------------------------------------
 elif menu == "🔄 استرجاع المبيعات المطور":
     st.header("🔄 قسم إدارة المرتجعات والاسترجاع المتقدم")
@@ -532,116 +530,189 @@ elif menu == "🔄 استرجاع المبيعات المطور":
     if df_sales.empty:
         st.info("💡 لا توجد عمليات بيع مسجلة حالياً في النظام.")
     else:
-        # البحث والفلترة
+        # فلترة وبحث
         col_search1, col_search2 = st.columns([2, 1])
         with col_search1:
-            search_refund = st.text_input("🔍 بحث عن فاتورة لمرتجع (برقم الفاتورة، اسم الزبون، المنتج أو الهاتف):")
+            search_refund = st.text_input("🔍 بحث عن فاتورة لمرتجع (برقم الفاتورة، اسم الزبون، أو رقم الهاتف):")
+        
+        # تجميع الفواتير برقم الفاتورة / العميل / التاريخ
+        df_sales['date_dt'] = pd.to_datetime(df_sales['date'])
         
         if search_refund:
-            df_filtered_sales = df_sales[
+            df_matching_sales = df_sales[
                 df_sales["id"].astype(str).str.contains(search_refund, case=False, na=False) |
                 df_sales["customer_name"].str.contains(search_refund, case=False, na=False) |
-                df_sales["product_name"].str.contains(search_refund, case=False, na=False) |
-                df_sales["customer_phone"].str.contains(search_refund, case=False, na=False)
+                df_sales["customer_phone"].str.contains(search_refund, case=False, na=False) |
+                df_sales["product_name"].str.contains(search_refund, case=False, na=False)
             ]
         else:
-            df_filtered_sales = df_sales
+            df_matching_sales = df_sales
 
-        st.subheader("📋 سجل الفواتير المتاحة للاسترجاع")
+        st.subheader("📑 سجل الفواتير المتاحة بالكامل")
+        
+        # عرض ملخص الفواتير المتاحة
+        invoices_summary = df_matching_sales.groupby("id").agg({
+            "customer_name": "first",
+            "customer_phone": "first",
+            "payment_method": "first",
+            "total_price": "sum",
+            "quantity": "sum",
+            "date": "first"
+        }).reset_index().sort_values(by="id", ascending=False)
+
         st.dataframe(
-            df_filtered_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "payment_method", "date"]],
+            invoices_summary,
             column_config={
                 "id": "رقم الفاتورة",
-                "customer_name": "العميل",
-                "customer_phone": "الهاتف",
-                "product_name": "المنتج",
-                "quantity": "الكمية المباعة",
-                "total_price": st.column_config.NumberColumn("المبلغ الإجمالي", format="%.2f د.أ"),
+                "customer_name": "اسم الزبون",
+                "customer_phone": "رقم الهاتف",
                 "payment_method": "طريقة الدفع",
-                "date": "التاريخ"
+                "total_price": st.column_config.NumberColumn("إجمالي الفاتورة", format="%.2f د.أ"),
+                "quantity": "إجمالي القطع",
+                "date": "التاريخ والوقت"
             },
             use_container_width=True, hide_index=True
         )
 
         st.divider()
 
-        # نافذة تنفيذ الإرجاع
-        st.subheader("⚙️ إجراء وتنفيذ عملية الإرجاع")
+        # نافذة اختيار الفاتورة ومعاينة محتوياتها بالكامل
+        st.subheader("🔍 معاينة الفاتورة الكاملة وإجراء المرتجع")
         
-        if df_filtered_sales.empty:
-            st.warning("⚠️ لا توجد فواتير تطابق بحثك.")
+        if invoices_summary.empty:
+            st.warning("⚠️ لا توجد فواتير تطابق البحث.")
         else:
+            selected_inv_id = st.selectbox("🎯 اختر رقم الفاتورة لاستعراض كافة مشترياتها وتنفيذ الإرجاع:", invoices_summary["id"].tolist())
+            
+            # جلب كافة محتويات المشتريات داخل هذه الفاتورة
+            invoice_items = df_sales[df_sales["id"] == selected_inv_id]
+            inv_header = invoice_items.iloc[0]
+            
+            # حساب المهلة الزمنية (14 يوماً)
+            inv_date = inv_header["date_dt"]
+            days_passed = (datetime.datetime.now() - inv_date).days
+            is_overdue = days_passed > 14
+
+            st.write("---")
+            c_info1, c_info2, c_info3 = st.columns(3)
+            c_info1.info(f"👤 الزبون: **{inv_header['customer_name']}** ({inv_header['customer_phone']})")
+            c_info2.warning(f"💳 طريقة الدفع: **{inv_header['payment_method']}**")
+            
+            if is_overdue:
+                c_info3.error(f"⏱️ تاريخ الفاتورة: **{inv_header['date']}** (تجاوزت 14 يوماً - تتطلب موافقة المدير)")
+            else:
+                c_info3.success(f"⏱️ تاريخ الفاتورة: **{inv_header['date']}** (ضمن المهلة المسموحة: {days_passed} يوم)")
+
+            st.markdown("##### 🛒 المنتجات والمشتريات داخل الفاتورة المختارة:")
+            st.dataframe(
+                invoice_items[["product_name", "quantity", "discount", "total_price"]],
+                column_config={
+                    "product_name": "اسم المنتج",
+                    "quantity": "الكمية المشتراة",
+                    "discount": st.column_config.NumberColumn("الخصم المطبق", format="%.2f د.أ"),
+                    "total_price": st.column_config.NumberColumn("الإجمالي الصافي", format="%.2f د.أ")
+                },
+                use_container_width=True, hide_index=True
+            )
+
+            st.divider()
+
+            # إعدادات عملية الاسترجاع للمنتج المSelected
             col_ref1, col_ref2 = st.columns([1.2, 1], gap="large")
             
             with col_ref1:
-                selected_refund_id = st.selectbox("اختر رقم الفاتورة المراد إرجاعها:", df_filtered_sales["id"].tolist())
-                refund_item = df_filtered_sales[df_filtered_sales["id"] == selected_refund_id].iloc[0]
+                st.subheader("⚙️ تفاصيل الاسترجاع")
+                selected_prod_refund = st.selectbox("اختر المنتج المراد إرجاعه من الفاتورة:", invoice_items["product_name"].tolist())
+                refund_item_row = invoice_items[invoice_items["product_name"] == selected_prod_refund].iloc[0]
                 
-                unit_price = refund_item["total_price"] / refund_item["quantity"] if refund_item["quantity"] > 0 else 0
-                
-                st.info(f"👤 الزبون: **{refund_item['customer_name']}** | 📱 الهاتف: **{refund_item['customer_phone']}**")
-                st.warning(f"📦 المنتج: **{refund_item['product_name']}** | الكمية المباعة أصلياً: **{refund_item['quantity']} قطعة**")
-                st.markdown(f"💰 السعر الإجمالي: **{refund_item['total_price']:.2f} د.أ** (سعر القطعة الصافي: **{unit_price:.2f} د.أ**)")
+                unit_price = refund_item_row["total_price"] / refund_item_row["quantity"] if refund_item_row["quantity"] > 0 else 0
 
-                refund_type = st.radio("نوع الاسترجاع:", ["استرجاع كلي (الفاتورة كاملة)", "استرجاع جزئي (بعض القطع)"], horizontal=True)
-                
-                if refund_type == "استرجاع جزئي (بعض القطع)":
-                    max_q_refund = int(refund_item['quantity'])
-                    qty_to_refund = st.number_input("حدد عدد القطع المراد إرجاعها:", min_value=1, max_value=max_q_refund, value=1)
-                    refund_cash_amount = qty_to_refund * unit_price
-                    is_full_refund = (qty_to_refund == max_q_refund)
+                # 1. سبب الإرجاع
+                return_reason = st.selectbox("📌 سبب إرجاع المنتج:", [
+                    "خطأ في الشراء / تغيير رأي العميل",
+                    "بضاعة تالفة / عيب تصنيع",
+                    "منتهي الصلاحية",
+                    "عدم تطابق المواصفات"
+                ])
+
+                # 2. تحديد الكمية المسترجعة
+                max_q_refund = int(refund_item_row['quantity'])
+                qty_to_refund = st.number_input("حدد عدد القطع المراد إرجاعها:", min_value=1, max_value=max_q_refund, value=1)
+                refund_cash_amount = qty_to_refund * unit_price
+                is_full_refund = (qty_to_refund == max_q_refund)
+
+                # 3. توضيح آلية الاسترداد (تسوية الآجل أو إرجاع نقدي)
+                is_credit_sale = "آجل" in str(inv_header['payment_method'])
+                if is_credit_sale:
+                    st.info(f"💡 هذه الفاتورة مدفوعة بالأصل **(آجل / ذمم)**. سيتم **خصم مبلغ ({refund_cash_amount:.2f} د.أ)** تلقائياً من حساب الدين القائم على العميل.")
                 else:
-                    qty_to_refund = int(refund_item['quantity'])
-                    refund_cash_amount = float(refund_item['total_price'])
-                    is_full_refund = True
+                    st.markdown(f"💵 **المبلغ المسترد للزبون نقداً:** <span style='color:#ef4444; font-size:20px; font-weight:bold;'>{refund_cash_amount:.2f} د.أ</span>", unsafe_allow_html=True)
 
-                st.markdown(f"💵 **المبلغ المطلوب إرجاعه للزبون:** <span style='color:#ef4444; font-size:22px; font-weight:bold;'>{refund_cash_amount:.2f} د.أ</span>", unsafe_allow_html=True)
+                # 4. خيار إعادة القطع للمخزون تلقائي حسب السبب
+                default_restock = False if ("تالفة" in return_reason or "الصلاحية" in return_reason) else True
+                restock_choice = st.checkbox("🔄 إعادة القطع المسترجعة للمخزون؟", value=default_restock)
 
-                restock_choice = st.checkbox("🔄 إعادة القطع المسترجعة للمخزون تلقائياً؟", value=True, help="الغي التحديد إذا كانت السلعة تالفة ولا تصلح للبيع مجدداً.")
+                # 5. طلب صلاحية Admin إذا لزم الأمر
+                admin_authorized = True
+                if is_overdue or st.session_state["user_role"] != "Admin":
+                    st.write("---")
+                    st.warning("🔒 يلزم تأكيد وإدخال كلمة سر المدير (Admin) لإتمام العملية:")
+                    admin_pass_input = st.text_input("كلمة سر المدير (Admin Password):", type="password", key="admin_refund_pass")
+                    if admin_pass_input != "admin123":
+                        admin_authorized = False
 
                 if st.button("❌ تأكيد وتنفيذ عملية الإرجاع فوراً", type="primary", use_container_width=True):
-                    refund_sale_advanced(
-                        sale_id=refund_item['id'],
-                        product_name=refund_item['product_name'],
-                        qty_to_refund=qty_to_refund,
-                        refund_amount=refund_cash_amount,
-                        return_to_stock=restock_choice,
-                        is_full_refund=is_full_refund
-                    )
-                    
-                    st.success(f"✅ تم إرجاع ({qty_to_refund}) قطعة من [{refund_item['product_name']}] بنجاح!")
-                    if restock_choice:
-                        st.info("📦 تم إعادة القطع إلى المخزن بنجاح.")
+                    if not admin_authorized:
+                        st.error("❌ كلمة سر المدير غير صحيحة أو غير مدخلة! لا يمكن إتمام عملية الاسترجاع.")
                     else:
-                        st.warning("⚠️ لم يتم إضافة القطع للمخزون (تم احتسابها كتالفة).")
+                        refund_sale_advanced(
+                            sale_id=refund_item_row['id'],
+                            product_name=refund_item_row['product_name'],
+                            qty_to_refund=qty_to_refund,
+                            refund_amount=refund_cash_amount,
+                            return_to_stock=restock_choice,
+                            is_full_refund=is_full_refund
+                        )
+                        
+                        st.success(f"✅ تم إرجاع ({qty_to_refund}) قطعة من [{refund_item_row['product_name']}] بنجاح!")
+                        
+                        if is_credit_sale:
+                            st.success("💳 تم تسوية المبلغ وخصمه من دين العميل بنجاح.")
+                        if restock_choice:
+                            st.info("📦 تم إعادة القطع إلى المخزن بنجاح.")
+                        else:
+                            st.warning("⚠️ لم يتم إعادة القطع للمخزون (تم تسجيلها كبضاعة تالفة/منتهية الصلاحية).")
 
-                    # إعداد إيصال المرتجع
-                    now_ref_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                    refund_receipt_text = f"""
+                        # إعداد إيصال المرتجع
+                        now_ref_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                        refund_receipt_text = f"""
 ========================================
          👑 متاجر المشاقبة 👑
        إيصال استرجاع مبيعات / مرتجع
 ========================================
 التاريخ: {now_ref_str}
-رقم الفاتورة الأصلية: #{refund_item['id']}
-اسم الزبون: {refund_item['customer_name']}
+رقم الفاتورة الأصلية: #{selected_inv_id}
+اسم الزبون: {inv_header['customer_name']}
+رقم الهاتف: {inv_header['customer_phone']}
 ----------------------------------------
-المنتج المسترجع: {refund_item['product_name']}
+المنتج المسترجع: {refund_item_row['product_name']}
 الكمية المسترجعة: {qty_to_refund} قطعة
-المبلغ المسترد للزبون: {refund_cash_amount:.2f} د.أ
-حالة المخزون: {'تمت الإعادة للمخزن' if restock_choice else 'بضاعة تالفة'}
+سبب الإرجاع: {return_reason}
+نوع التسوية المالية: {'خصم من الدين (آجل)' if is_credit_sale else 'استرداد نقدي'}
+المبلغ المسترد: {refund_cash_amount:.2f} د.أ
+حالة المخزون: {'تمت الإعادة للمخزن' if restock_choice else 'بضاعة تالفة / لم تُعد للمخزن'}
 ----------------------------------------
 توقيع المسؤول: __________________
 ========================================
                   """
-                    st.session_state["last_refund_receipt"] = refund_receipt_text
-                    st.rerun()
+                        st.session_state["last_refund_receipt"] = refund_receipt_text
+                        st.rerun()
 
             with col_ref2:
                 st.subheader("📄 معاينة إيصال الإرجاع")
                 if "last_refund_receipt" in st.session_state:
-                    st.text_area("معاينة الإيصال:", st.session_state["last_refund_receipt"], height=270)
-                    st.download_button("🖨️ تنزيل سند المرتجع (TXT)", data=st.session_state["last_refund_receipt"], file_name=f"Refund_Receipt_{selected_refund_id}.txt", mime="text/plain")
+                    st.text_area("معاينة سند المرتجع:", st.session_state["last_refund_receipt"], height=320)
+                    st.download_button("🖨️ تنزيل سند المرتجع (TXT)", data=st.session_state["last_refund_receipt"], file_name=f"Refund_Receipt_{selected_inv_id}.txt", mime="text/plain")
                 else:
                     st.info("قم بإجراء عملية إرجاع لعرض المعاينة وطباعتها هنا.")
 
