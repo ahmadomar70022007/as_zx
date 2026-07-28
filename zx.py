@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 import streamlit as st
+import datetime
 
 # 1. تهيئة الصفحة
 st.set_page_config(
@@ -41,7 +42,7 @@ def init_db():
         )
     ''')
     
-    # التحديث التلقائي لأعمدة الجداول إن لم تكن موجودة
+    # التحديث التلقائي لأعمدة الجداول
     cursor.execute("PRAGMA table_info(sales)")
     columns = [column[1] for column in cursor.fetchall()]
     if 'discount' not in columns:
@@ -114,7 +115,7 @@ def get_sales_history():
 
 init_db()
 
-# --- إدارة الجلسة وتسجيل الدخول ---
+# --- إدارة الجلسة وتسجيل الدخول المضمون ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user_role" not in st.session_state:
@@ -150,31 +151,29 @@ if not st.session_state["logged_in"]:
                     st.error("❌ اسم المستخدم أو كلمة السر غير صحيحة")
     st.stop()
 
-if not st.session_state.logged_in:
-    login()
-    st.stop()
-
 # --- الهيدر الرئيسي والعلامة التجارية ---
 st.markdown("<h2 style='text-align: center; color: #f59e0b;'>✨ بسم الله الرحمن الرحيم ✨</h2>", unsafe_allow_html=True)
 st.markdown("<h1 style='text-align: center;'>👑 مَـتـاجِـر الـمُـشَـاقِـبَـة</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #9ca3af;'>AL-MASHAQBEH TRADING CO. - العلامة التجارية المسجلة ®</p>", unsafe_allow_html=True)
 
-st.sidebar.markdown(f"👤 **المستخدم الحقيقي:** `{st.session_state.user_role}`")
+st.sidebar.markdown(f"👤 **المستخدم الحالي:** `{st.session_state['user_role']}`")
 if st.sidebar.button("🚪 تسجيل الخروج"):
-    st.session_state.logged_in = False
-    st.session_state.user_role = None
+    st.session_state["logged_in"] = False
+    st.session_state["user_role"] = None
     st.rerun()
 
 st.divider()
 
 # تحديد القوائم حسب الصلاحيات
-if st.session_state.user_role == "Admin":
+if st.session_state["user_role"] == "Admin":
     menu_options = [
         "🏪 كاشير المبيعات", 
         "🚨 تنبيهات النقص", 
+        "💳 سجل الذمم والديون",
         "🔄 استرجاع المبيعات", 
         "📦 إدارة المخزون", 
-        "📊 السجل والرسوم البيانية"
+        "📊 السجل والتقارير الزمانية",
+        "⚙️ النسخ الاحتياطي والنظام"
     ]
 else:
     menu_options = ["🏪 كاشير المبيعات"]
@@ -182,7 +181,7 @@ else:
 menu = st.sidebar.radio("🔱 القائمة الرئيسية", menu_options)
 
 # ----------------------------------------------------
-# 1. قسم كاشير المبيعات ونظام الفواتير والخصومات
+# 1. قسم كاشير المبيعات ونظام الفواتير الحرارية
 # ----------------------------------------------------
 if menu == "🏪 كاشير المبيعات":
     st.header("🛒 قسم المبيعات وإصدار الفواتير")
@@ -213,8 +212,8 @@ if menu == "🏪 كاشير المبيعات":
             max_qty = int(prod_info['stock']) if prod_info['stock'] > 0 else 1
             qty = st.number_input("الكمية المطلوبة:", min_value=1, max_value=max_qty, value=1, disabled=(prod_info['stock'] == 0))
             
-            # طريقة الدفع
-            pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa/Mastercard)"])
+            # طرق الدفع المحدثة
+            pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
             
             # الخصم
             st.write("---")
@@ -240,29 +239,31 @@ if menu == "🏪 كاشير المبيعات":
                 sale_id = record_sale(c_name, c_phone, prod_info['id'], prod_info['name'], qty, discount_value, pay_method, final_total)
                 st.success(f"✅ تم تسجيل العملية بنجاح! (رقم الفاتورة: #{sale_id})")
                 
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 invoice_text = f"""
-====================================
+========================================
          👑 متاجر المشاقبة 👑
      AL-MASHAQBEH TRADING CO.
-====================================
+========================================
+التاريخ: {now_str}
 رقم الفاتورة: #{sale_id}
 اسم الزبون: {c_name}
 هاتف الزبون: {c_phone}
 طريقة الدفع: {pay_method}
-------------------------------------
+----------------------------------------
 المنتج: {prod_info['name']}
-الكمية: {qty}
-سعر القطعة: {prod_info['price']:.2f} د.أ
+الكمية: {qty}  x  {prod_info['price']:.2f} د.أ
 المجموع الفرعي: {subtotal:.2f} د.أ
 الخصم: {discount_value:.2f} د.أ
+----------------------------------------
 الإجمالي النهائي: {final_total:.2f} د.أ
-====================================
-شكراً لتسوقكم معنا!
+========================================
+    شكراً لتسوقكم معنا! نتمنى لكم يوماً سعيداً
                 """
                 
-                st.text_area("📄 معاينة الفاتورة الحرارية:", invoice_text, height=250)
+                st.text_area("📄 معاينة الفاتورة الحرارية (80mm Thermal Receipt):", invoice_text, height=260)
                 st.download_button(
-                    label="🖨️ تنزيل وطباعة الفاتورة (TXT)",
+                    label="🖨️ تنزيل وطباعة الفاتورة الحرارية (TXT)",
                     data=invoice_text,
                     file_name=f"Invoice_{sale_id}.txt",
                     mime="text/plain"
@@ -320,7 +321,36 @@ elif menu == "🚨 تنبيهات النقص":
         )
 
 # ----------------------------------------------------
-# 3. قسم استرجاع المبيعات
+# 3. قسم سجل الذمم والديون (💳 Debt Management)
+# ----------------------------------------------------
+elif menu == "💳 سجل الذمم والديون":
+    st.header("💳 سجل المبيعات الآجلة والذمم المترتبة على الزبائن")
+    df_sales = get_sales_history()
+    
+    credit_sales = df_sales[df_sales["payment_method"].str.contains("آجل", na=False)]
+    
+    if credit_sales.empty:
+        st.success("🎉 لا توجد ديون أو ذمم آحلة على الزبائن حالياً!")
+    else:
+        total_credit = credit_sales["total_price"].sum()
+        st.warning(f"⚠️ إجمالي الديون القائمة على الزبائن: **{total_credit:.2f} د.أ**")
+        st.dataframe(
+            credit_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "date"]],
+            column_config={
+                "id": "رقم الفاتورة",
+                "customer_name": "اسم الزبون",
+                "customer_phone": "رقم الهاتف",
+                "product_name": "المنتج",
+                "quantity": "الكمية",
+                "total_price": st.column_config.NumberColumn("الدين المستحق (د.أ)", format="%.2f د.أ"),
+                "date": "التاريخ",
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+
+# ----------------------------------------------------
+# 4. قسم استرجاع المبيعات
 # ----------------------------------------------------
 elif menu == "🔄 استرجاع المبيعات":
     st.header("🔄 قسم استرجاع وإرجاع المبيعات")
@@ -343,7 +373,7 @@ elif menu == "🔄 استرجاع المبيعات":
             st.rerun()
 
 # ----------------------------------------------------
-# 4. قسم إدارة المخزون
+# 5. قسم إدارة المخزون وتصنيف البيانات
 # ----------------------------------------------------
 elif menu == "📦 إدارة المخزون":
     st.header("📦 إدارة المنتجات والمخزون")
@@ -390,26 +420,54 @@ elif menu == "📦 إدارة المخزون":
 
     st.divider()
     st.subheader("📋 قائمة المخزون الحالية")
-    st.dataframe(get_products(), use_container_width=True)
+    
+    # خيارات ترتيب المخزون
+    sort_option = st.selectbox("↕️ ترتيب المخزون حسب:", ["المُعرّف (الافتراضي)", "الأقل كمية بالمخزون", "الأعلى سعراً", "الأقل سعراً"])
+    df_disp = get_products()
+    if sort_option == "الأقل كمية بالمخزون":
+        df_disp = df_disp.sort_values(by="stock", ascending=True)
+    elif sort_option == "الأعلى سعراً":
+        df_disp = df_disp.sort_values(by="price", ascending=False)
+    elif sort_option == "الأقل سعراً":
+        df_disp = df_disp.sort_values(by="price", ascending=True)
+        
+    st.dataframe(df_disp, use_container_width=True)
 
 # ----------------------------------------------------
-# 5. قسم السجل والرسوم البيانية (📊 Dashboard & Analytics)
+# 6. قسم السجل والتقارير الزمانية والرسوم البيانية
 # ----------------------------------------------------
-elif menu == "📊 السجل والرسوم البيانية":
-    st.header("📊 التقارير والرسوم البيانية التفاعلية")
+elif menu == "📊 السجل والتقارير الزمانية":
+    st.header("📊 السجل المالي والتحليلات الزمانية")
     df_sales = get_sales_history()
     
     if df_sales.empty:
         st.info("لا توجد مبيعات مسجلة حتى الآن.")
     else:
-        total_revenue = df_sales["total_price"].sum()
-        total_items_sold = df_sales["quantity"].sum()
-        total_discounts = df_sales["discount"].sum() if "discount" in df_sales.columns else 0.0
+        # فلترة السجل حسب التاريخ
+        df_sales["date_dt"] = pd.to_datetime(df_sales["date"])
+        
+        st.subheader("🗓️ فلترة التقارير حسب التاريخ")
+        date_filter = st.radio("اختر الفترة:", ["الكل", "اليوم", "آخر 7 أيام", "هذا الشهر"], horizontal=True)
+        
+        today = datetime.datetime.now().date()
+        if date_filter == "اليوم":
+            df_filtered = df_sales[df_sales["date_dt"].dt.date == today]
+        elif date_filter == "آخر 7 أيام":
+            seven_days_ago = today - datetime.timedelta(days=7)
+            df_filtered = df_sales[df_sales["date_dt"].dt.date >= seven_days_ago]
+        elif date_filter == "هذا الشهر":
+            df_filtered = df_sales[(df_sales["date_dt"].dt.month == today.month) & (df_sales["date_dt"].dt.year == today.year)]
+        else:
+            df_filtered = df_sales
+            
+        total_revenue = df_filtered["total_price"].sum()
+        total_items_sold = df_filtered["quantity"].sum()
+        total_discounts = df_filtered["discount"].sum() if "discount" in df_filtered.columns else 0.0
         
         m1, m2, m3 = st.columns(3)
-        m1.metric(label="إجمالي صافي المبيعات", value=f"{total_revenue:.2f} د.أ")
-        m2.metric(label="إجمالي القطع المباعة", value=f"{int(total_items_sold)} قطعة")
-        m3.metric(label="إجمالي الخصومات", value=f"{total_discounts:.2f} د.أ")
+        m1.metric(label="صافي أرباح الفترة المحدد", value=f"{total_revenue:.2f} د.أ")
+        m2.metric(label="القطع المباعة بالفترة", value=f"{int(total_items_sold)} قطعة")
+        m3.metric(label="الخصومات الممنوحة", value=f"{total_discounts:.2f} د.أ")
         
         st.divider()
         st.subheader("📈 التحليلات والرسوم البيانية")
@@ -417,20 +475,20 @@ elif menu == "📊 السجل والرسوم البيانية":
         chart_col1, chart_col2 = st.columns(2)
         
         with chart_col1:
-            st.markdown("##### 🏆 الأكثر مبيعاً حسب المبيعات (د.أ)")
-            sales_by_prod = df_sales.groupby("product_name")["total_price"].sum()
+            st.markdown("##### 🏆 أكثر المنتجات إيراداً (د.أ)")
+            sales_by_prod = df_filtered.groupby("product_name")["total_price"].sum()
             st.bar_chart(sales_by_prod)
             
         with chart_col2:
             st.markdown("##### 💳 المبيعات حسب طريقة الدفع")
-            pay_dist = df_sales.groupby("payment_method")["total_price"].sum()
+            pay_dist = df_filtered.groupby("payment_method")["total_price"].sum()
             st.bar_chart(pay_dist)
 
         st.divider()
-        st.subheader("📥 تصدير السجل")
-        csv_data = df_sales.to_csv(index=False).encode('utf-8-sig')
+        st.subheader("📥 تصدير السجل المالي")
+        csv_data = df_filtered.drop(columns=["date_dt"], errors="ignore").to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="📊 تصدير السجل المالي كملف CSV / Excel (.csv)",
+            label="📊 تصدير البيانات المفلترة كملف CSV / Excel (.csv)",
             data=csv_data,
             file_name="Sales_Report_Mashaqa.csv",
             mime="text/csv",
@@ -439,4 +497,25 @@ elif menu == "📊 السجل والرسوم البيانية":
             
         st.divider()
         st.subheader("📋 جدول الفواتير والسجلات التفصيلية")
-        st.dataframe(df_sales, use_container_width=True)
+        st.dataframe(df_filtered.drop(columns=["date_dt"], errors="ignore"), use_container_width=True)
+
+# ----------------------------------------------------
+# 7. قسم النسخ الاحتياطي وإدارة النظام (⚙️ System & Backup)
+# ----------------------------------------------------
+elif menu == "⚙️ النسخ الاحتياطي والنظام":
+    st.header("⚙️ أدوات النظام والنسخ الاحتياطي")
+    st.write("يمكنك تحميل نسخة احتياطية كامِلة من قاعدة البيانات للحفاظ على سلامة المبيعات والمخزون.")
+    
+    try:
+        with open(DB_NAME, "rb") as db_file:
+            db_bytes = db_file.read()
+            
+        st.download_button(
+            label="💾 تحميل النسخة الاحتياطية لقاعدة البيانات (web_store.db)",
+            data=db_bytes,
+            file_name="web_store_backup.db",
+            mime="application/x-sqlite3",
+            type="primary"
+        )
+    except Exception as e:
+        st.error(f"لم يتم العثور على قاعدة البيانات بعد: {e}")
