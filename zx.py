@@ -823,9 +823,12 @@ elif menu == "📊 التقارير المالية والأرباح":
 
             with col_ch2:
                 st.subheader("🏆 أفضل المنتجات مبيعاً")
-                top_products = filtered_df.groupby("product_name").agg({"quantity": "sum", "total_price": "sum"}).reset_index()
+                top_products = filtered_df.groupby("product_name").agg(
+                    quantity=("quantity", "sum"),
+                    total_price=("total_price", "sum")
+                ).reset_index()
                 top_products.columns = ["اسم المنتج", "الكمية المباعة", "إجمالي المبيعات (د.أ)"]
-                top_products = top_products.sort_values(by="quantity", ascending=False)
+                top_products = top_products.sort_values(by="الكمية المباعة", ascending=False)
                 st.dataframe(top_products, use_container_width=True, hide_index=True)
 
             st.divider()
