@@ -13,7 +13,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# تخصيص ثيم النظام بالألوان الذهبية والداكنة الجذابة
 st.markdown("""
 <style>
     .stApp {
@@ -57,7 +56,6 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # جدول المنتجات
     c.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +69,6 @@ def init_db():
         )
     ''')
     
-    # جدول المبيعات
     c.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +84,6 @@ def init_db():
         )
     ''')
 
-    # جدول الذمم والديون
     c.execute('''
         CREATE TABLE IF NOT EXISTS debts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +95,6 @@ def init_db():
         )
     ''')
 
-    # جدول المستخدمين والصلاحيات
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +104,6 @@ def init_db():
         )
     ''')
 
-    # جدول سجل التدقيق الأمني للأحداث (Audit Log)
     c.execute('''
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,7 +114,6 @@ def init_db():
         )
     ''')
     
-    # إنشاء الحسابات الافتراضية
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("admin", "admin123", "Admin"))
@@ -203,7 +196,7 @@ def get_products():
     return df
 
 # ----------------------------------------------------
-# 1. كاشير المبيعات المطور (عرض الكل + خصم متعدد)
+# 1. كاشير المبيعات
 # ----------------------------------------------------
 if menu == "🛒 كاشير المبيعات (POS)":
     st.header("🛒 نقطة البيع السريعة - متجر الهاشمية")
@@ -226,7 +219,6 @@ if menu == "🛒 كاشير المبيعات (POS)":
                 ]
 
             if not filtered_df.empty:
-                # عرض قائمة جميع المنتجات بشكل تفاعلي وواضح
                 for idx, prod in filtered_df.iterrows():
                     with st.container():
                         p_col1, p_col2, p_col3, p_col4 = st.columns([2.5, 1.2, 1.2, 1])
@@ -235,7 +227,6 @@ if menu == "🛒 كاشير المبيعات (POS)":
                         p_col2.write(f"السعر: **{prod['price']:.2f} د.أ**")
                         p_col3.write(f"المخزون: `{prod['stock']}`")
                         
-                        # زر إضافة مباشر للسلة
                         if p_col4.button("➕ إضافة", key=f"add_btn_{prod['id']}"):
                             if prod['stock'] <= 0:
                                 st.error("المادة غير متوفرة بالمخزن!")
@@ -269,12 +260,10 @@ if menu == "🛒 كاشير المبيعات (POS)":
             if not st.session_state["cart"]:
                 st.info("السلة فارغة. اضغط (➕ إضافة) بجانب أي منتج من القائمة.")
             else:
-                # تعديل الكمية مباشرة أو حذف العنصر من داخل السلة
                 for idx, item in enumerate(st.session_state["cart"]):
                     c_name, c_qty, c_price, c_del = st.columns([2, 1.5, 1.2, 0.6])
                     c_name.write(f"**{item['name']}**")
                     
-                    # تعديل الكمية مباشرة
                     prod_in_db = df_products[df_products["id"] == item["id"]].iloc[0]
                     new_q = c_qty.number_input("الكمية", min_value=1, max_value=int(prod_in_db["stock"]), value=int(item["quantity"]), key=f"q_input_{idx}", label_visibility="collapsed")
                     
@@ -293,7 +282,6 @@ if menu == "🛒 كاشير المبيعات (POS)":
                 st.write("---")
                 subtotal_val = sum(item['subtotal'] for item in st.session_state["cart"])
                 
-                # نظام الخصم المتعدد (نسبة % أو مبلغ د.أ)
                 st.markdown("#### 🏷️ نظام الخصم المتعدد")
                 disc_type = st.radio("نوع الخصم:", ["مبلغ ثابت (د.أ)", "نسبة مئوية (%)"], horizontal=True)
                 
@@ -334,7 +322,7 @@ if menu == "🛒 كاشير المبيعات (POS)":
                         conn.commit()
                         conn.close()
                         
-                        log_action(seller, "عملية بيع", f"فاتورة بقيمة {grand_total:.2f} د.أ (خصم {discount_val:.2f} د.أ) - الزبون: {cust_name}")
+                        log_action(seller, "عملية بيع", f"فاتورة بقيمة {grand_total:.2f} د.أ - الزبون: {cust_name}")
                         st.session_state["cart"] = []
                         st.success("🎉 تم إتمام العملية بنجاح!")
                         st.rerun()
@@ -345,7 +333,7 @@ if menu == "🛒 كاشير المبيعات (POS)":
                         st.rerun()
 
 # ----------------------------------------------------
-# 2. تنبيهات النقص وإعادة التزويد السريعة
+# 2. تنبيهات النقص وإعادة التزويد
 # ----------------------------------------------------
 elif menu == "🚨 تنبيهات النقص وإعادة التزويد":
     st.header("🚨 مراقبة النقص وإعادة الشحن")
@@ -424,38 +412,122 @@ elif menu == "📙 سجل الذمم وتسديد الديون":
                 st.rerun()
 
 # ----------------------------------------------------
-# 4. إرجاع واستبدال الفواتير
+# 4. قسم إرجاع واستبدال الفواتير المطور 🔄
 # ----------------------------------------------------
 elif menu == "🔄 إرجاع واستبدال الفواتير":
-    st.header("🔄 قسم استرجاع واستبدال الفواتير")
+    st.header("🔄 قسم استرجاع واستبدال الفواتير المطور")
+    
     conn = sqlite3.connect(DB_NAME)
-    df_sales = pd.read_sql_query("SELECT * FROM sales ORDER BY id DESC LIMIT 30", conn)
+    df_sales = pd.read_sql_query("SELECT * FROM sales ORDER BY id DESC", conn)
     conn.close()
 
     if df_sales.empty:
-        st.info("لا توجد مبيعات سابقة للإرجاع.")
+        st.info("💡 لا توجد عمليات مبيعات مسجلة لإرجاعها.")
     else:
-        st.dataframe(df_sales, use_container_width=True, hide_index=True)
+        st.subheader("🔎 البحث في الفواتير")
+        search_invoice = st.text_input("ادخل رقم الفاتورة / اسم الزبون / اسم المنتج:", placeholder="ابحث هنا...")
+        
+        filtered_sales = df_sales
+        if search_invoice:
+            filtered_sales = df_sales[
+                df_sales['id'].astype(str).str.contains(search_invoice, case=False, na=False) |
+                df_sales['customer_name'].str.contains(search_invoice, case=False, na=False) |
+                df_sales['product_name'].str.contains(search_invoice, case=False, na=False)
+            ]
+
+        st.dataframe(filtered_sales, use_container_width=True, hide_index=True)
         st.divider()
-        st.subheader("⚠️ إرجاع فاتورة وإعادة الصنف للمخزن")
+
+        st.subheader("🛠️ تنفيذ عملية الإرجاع")
         
-        sale_to_refund = st.selectbox("اختر العملية المراد استرجاعها:", df_sales["id"].tolist(),
-                                      format_func=lambda x: f"فاتورة #{x} - {df_sales[df_sales['id']==x]['product_name'].values[0]} (الكمية: {df_sales[df_sales['id']==x]['quantity'].values[0]})")
-        
-        if st.button("🔄 إرجاع المبلغ وإعادة الكمية للمخزن", type="primary"):
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
+        if filtered_sales.empty:
+            st.warning("لا توجد فواتير تطابق عملية البحث.")
+        else:
+            selected_sale_id = st.selectbox(
+                "اختر العملية المراد إرجاعها:", 
+                filtered_sales["id"].tolist(),
+                format_func=lambda x: f"فاتورة #{x} | الزبون: {df_sales[df_sales['id']==x]['customer_name'].values[0]} | المادة: {df_sales[df_sales['id']==x]['product_name'].values[0]} | الكمية المباعة: {df_sales[df_sales['id']==x]['quantity'].values[0]}"
+            )
+
+            sale_row = df_sales[df_sales["id"] == selected_sale_id].iloc[0]
             
-            sale_data = df_sales[df_sales["id"] == sale_to_refund].iloc[0]
-            
-            c.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (sale_data["quantity"], sale_data["product_name"]))
-            c.execute("DELETE FROM sales WHERE id = ?", (sale_to_refund,))
-            
-            conn.commit()
-            conn.close()
-            log_action(st.session_state["logged_user"], "إرجاع فاتورة", f"استرجاع فاتورة #{sale_to_refund} الخاصة بـ {sale_data['product_name']}")
-            st.success("تم عملية الإرجاع وإعادة الكمية للمخزن بنجاح!")
-            st.rerun()
+            with st.container():
+                st.markdown(f"""
+                <div class="gold-box">
+                    <strong>تفاصيل العملية المختارة:</strong><br>
+                    • رقم الفاتورة: #{sale_row['id']} | التاريخ: {sale_row['date']}<br>
+                    • الزبون: {sale_row['customer_name']} | طريقة الدفع: {sale_row['payment_method']}<br>
+                    • المنتج: {sale_row['product_name']} | السعر الإجمالي: {sale_row['total_price']:.2f} د.أ
+                </div>
+                """, unsafe_allow_html=True)
+
+                col_rf1, col_rf2 = st.columns(2)
+                with col_rf1:
+                    return_qty = st.number_input("حدد الكمية المراد إرجاعها:", min_value=1, max_value=int(sale_row['quantity']), value=int(sale_row['quantity']))
+                
+                unit_price = sale_row['total_price'] / sale_row['quantity']
+                refund_amount = return_qty * unit_price
+                
+                with col_rf2:
+                    st.markdown(f"### 💵 المبلغ المسترجع: `{refund_amount:.2f} د.أ`")
+
+                if st.button("🔄 تأكيد عملية الإرجاع وصرف المستحقات", type="primary", use_container_width=True):
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    
+                    # 1. إعادة الكمية إلى جدول المنتجات
+                    c.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (return_qty, sale_row['product_name']))
+                    
+                    # 2. تعديل أو حذف العملية من المبيعات
+                    if return_qty == sale_row['quantity']:
+                        c.execute("DELETE FROM sales WHERE id = ?", (selected_sale_id,))
+                    else:
+                        new_qty = sale_row['quantity'] - return_qty
+                        new_total = new_qty * unit_price
+                        new_profit = sale_row['net_profit'] * (new_qty / sale_row['quantity'])
+                        c.execute("UPDATE sales SET quantity = ?, total_price = ?, net_profit = ? WHERE id = ?", 
+                                  (new_qty, new_total, new_profit, selected_sale_id))
+
+                    # 3. معالجة الذمم إذا كانت العملية بالدين
+                    if sale_row['payment_method'] == "ذمم / دين":
+                        c.execute("SELECT id, amount FROM debts WHERE customer_name = ? AND status = 'غير مدفوع' ORDER BY id DESC LIMIT 1", (sale_row['customer_name'],))
+                        debt_record = c.fetchone()
+                        if debt_record:
+                            d_id, curr_amt = debt_record
+                            new_amt = max(0.0, curr_amt - refund_amount)
+                            if new_amt == 0:
+                                c.execute("UPDATE debts SET amount = 0, status = 'تم التسديد' WHERE id = ?", (d_id,))
+                            else:
+                                c.execute("UPDATE debts SET amount = ? WHERE id = ?", (new_amt, d_id))
+
+                    conn.commit()
+                    conn.close()
+
+                    # تسجيل الحادثة
+                    log_action(st.session_state["logged_user"], "إرجاع فاتورة", f"إرجاع {return_qty} من {sale_row['product_name']} بقيمة {refund_amount:.2f} د.أ للزبون {sale_row['customer_name']}")
+
+                    st.success(f"🎉 تم إرجاع {return_qty} قطعة بنجاح وتحديث الرصيد بالمخزن!")
+
+                    # طباعة سند إرجاع
+                    receipt_html = f"""
+                    <div style="border:2px dashed #f59e0b; padding:15px; border-radius:10px; text-align:center; color:white; background-color:#111827; width:300px; margin:auto;">
+                        <h3 style="color:#f59e0b; margin:0;">👑 متجر الهاشمية</h3>
+                        <p style="margin:5px 0;"><strong>سند إرجاع مبيعات</strong></p>
+                        <hr style="border-color:#374151;">
+                        <p style="text-align:right; font-size:12px;">
+                        رقم الإرجاع: #{selected_sale_id}<br>
+                        التاريخ: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}<br>
+                        الزبون: {sale_row['customer_name']}<br>
+                        المادة: {sale_row['product_name']}<br>
+                        الكمية المرتجعة: {return_qty}<br>
+                        المبلغ المردود: {refund_amount:.2f} د.أ
+                        </p>
+                        <hr style="border-color:#374151;">
+                        <p style="font-size:11px; color:#9ca3af;">شكراً لتعاملكم مع متجر الهاشمية</p>
+                    </div>
+                    """
+                    st.markdown(receipt_html, unsafe_allow_html=True)
+                    st.download_button("🖨️ طباعة سند الإرجاع (HTML)", data=f"<html><body onload='window.print();'>{receipt_html}</body></html>", file_name=f"Return_{selected_sale_id}.html", mime="text/html")
 
 # ----------------------------------------------------
 # 5. إدارة وتعديل المخزون
