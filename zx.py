@@ -164,7 +164,7 @@ if st.sidebar.button("🚪 تسجيل الخروج"):
 
 st.divider()
 
-# تحديد القوائم حسب الصلاحيات
+# القوائم المتاحة حسب الصلاحيات
 if st.session_state["user_role"] == "Admin":
     menu_options = [
         "🏪 كاشير المبيعات", 
@@ -172,7 +172,8 @@ if st.session_state["user_role"] == "Admin":
         "💳 سجل الذمم والديون",
         "🔄 استرجاع المبيعات", 
         "📦 إدارة المخزون", 
-        "📊 السجل والتقارير الزمانية",
+        "🏷️ طباعة بطاقات الأسعار",
+        "📊 السجل والتقارير المتقدمة",
         "⚙️ النسخ الاحتياطي والنظام"
     ]
 else:
@@ -181,63 +182,82 @@ else:
 menu = st.sidebar.radio("🔱 القائمة الرئيسية", menu_options)
 
 # ----------------------------------------------------
-# 1. قسم كاشير المبيعات ونظام الفواتير الحرارية
+# 1. كاشير المبيعات
 # ----------------------------------------------------
 if menu == "🏪 كاشير المبيعات":
-    st.header("🛒 قسم المبيعات وإصدار الفواتير")
-    
+    st.header("🛒 قسم المبيعات والكاشير التفاعلي")
     df_products = get_products()
     
     if df_products.empty:
         st.info("💡 لا توجد منتجات في المخزون حالياً.")
     else:
-        col_action, col_display = st.columns([1.2, 1], gap="large")
+        col_action, col_display = st.columns([1.3, 1], gap="large")
         
         with col_action:
-            st.subheader("👤 بيانات الزبون والفاتورة")
-            c_name = st.text_input("اسم الزبون:", value="عميل نقدي")
-            c_phone = st.text_input("رقم هاتف الزبون:", value="-")
+            st.subheader("👤 بيانات الزبون")
+            c_col1, c_col2 = st.columns(2)
+            with c_col1:
+                c_name = st.text_input("اسم الزبون:", value="عميل نقدي", key="cashier_cname")
+            with c_col2:
+                c_phone = st.text_input("رقم هاتف الزبون:", value="-", key="cashier_cphone")
             
             st.write("---")
-            st.subheader("🛍️ تحديد المنتج")
+            st.subheader("🛍️ تفاصيل الطلب")
             product_list = df_products["name"].tolist()
             selected_product_name = st.selectbox("اختر المنتج:", options=product_list, key="cashier_select")
             
             prod_info = df_products[df_products["name"] == selected_product_name].iloc[0]
             
-            m1, m2 = st.columns(2)
+            # عرض المقاييس وشريط المخزون المرئي
+            m1, m2, m3 = st.columns(3)
             m1.metric("💰 سعر القطعة", f"{prod_info['price']:.2f} د.أ")
-            m2.metric("📦 المخزون المتاح", f"{prod_info['stock']} قطعة")
+            m2.metric("📦 المخزون", f"{prod_info['stock']} قطعة")
             
+            if prod_info['stock'] == 0:
+                m3.metric("الحالة", "❌ نافد", delta_color="inverse")
+            elif prod_info['stock'] <= 5:
+                m3.metric("الحالة", "⚠️ منخفض", delta_color="off")
+            else:
+                m3.metric("الحالة", "✅ ممتاز")
+
             max_qty = int(prod_info['stock']) if prod_info['stock'] > 0 else 1
             qty = st.number_input("الكمية المطلوبة:", min_value=1, max_value=max_qty, value=1, disabled=(prod_info['stock'] == 0))
             
-            # طرق الدفع المحدثة
-            pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
-            
-            # الخصم
-            st.write("---")
-            st.subheader("🎟️ الخصومات")
-            discount_type = st.radio("نوع الخصم:", ["بدون خصم", "نسبة مئوية (%)", "مبلغ مباشر (د.أ)"], horizontal=True)
-            
-            discount_value = 0.0
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
+            with p_col2:
+                discount_type = st.radio("نوع الخصم:", ["بدون خصم", "نسبة (%)", "مبلغ (د.أ)"], horizontal=True)
+
             subtotal = qty * prod_info['price']
+            discount_value = 0.0
             
-            if discount_type == "نسبة مئوية (%)":
-                pct = st.number_input("نسبة الخصم (%):", min_value=0.0, max_value=100.0, value=0.0)
+            if discount_type == "نسبة (%)":
+                pct = st.number_input("النسبة (%):", min_value=0.0, max_value=100.0, value=0.0)
                 discount_value = (subtotal * pct) / 100.0
-            elif discount_type == "مبلغ مباشر (د.أ)":
-                discount_value = st.number_input("مبلغ الخصم (د.أ):", min_value=0.0, max_value=float(subtotal), value=0.0)
+            elif discount_type == "مبلغ (د.أ)":
+                discount_value = st.number_input("المبلغ (د.أ):", min_value=0.0, max_value=float(subtotal), value=0.0)
             
             final_total = max(0.0, subtotal - discount_value)
             
-            st.markdown(f"#### 💵 السعر الأصلي: {subtotal:.2f} د.أ")
-            st.markdown(f"#### 🏷️ الخصم المطبق: <span style='color:#ef4444;'>-{discount_value:.2f} د.أ</span>", unsafe_allow_html=True)
-            st.markdown(f"### 💳 الإجمالي النهائي: <span style='color:#f59e0b;'>{final_total:.2f} د.أ</span>", unsafe_allow_html=True)
+            st.write("---")
+            if "نقداً" in pay_method:
+                paid_col, change_col = st.columns(2)
+                with paid_col:
+                    amount_paid = st.number_input("💵 المبلغ المدفوع من الزبون (د.أ):", min_value=0.0, value=float(final_total))
+                with change_col:
+                    change_due = max(0.0, amount_paid - final_total)
+                    st.metric("🪙 الباقي للزبون", f"{change_due:.2f} د.أ")
+            else:
+                amount_paid = final_total
+                change_due = 0.0
+
+            st.markdown(f"#### 💵 الفرعي: `{subtotal:.2f} د.أ` | 🏷️ الخصم: <span style='color:#ef4444;'>-{discount_value:.2f} د.أ</span>", unsafe_allow_html=True)
+            st.markdown(f"### 💳 صافي الفاتورة: <span style='color:#f59e0b;'>{final_total:.2f} د.أ</span>", unsafe_allow_html=True)
             
-            if st.button("✨ إتمام عملية البيع وطباعة الفاتورة", use_container_width=True, type="primary", disabled=(prod_info['stock'] == 0)):
+            if st.button("✨ إتمام العملية وطباعة الفاتورة", use_container_width=True, type="primary", disabled=(prod_info['stock'] == 0)):
                 sale_id = record_sale(c_name, c_phone, prod_info['id'], prod_info['name'], qty, discount_value, pay_method, final_total)
-                st.success(f"✅ تم تسجيل العملية بنجاح! (رقم الفاتورة: #{sale_id})")
+                st.success(f"✅ تم تسجيل عملية البيع بنجاح! (رقم الفاتورة: #{sale_id})")
                 
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 invoice_text = f"""
@@ -254,32 +274,22 @@ if menu == "🏪 كاشير المبيعات":
 المنتج: {prod_info['name']}
 الكمية: {qty}  x  {prod_info['price']:.2f} د.أ
 المجموع الفرعي: {subtotal:.2f} د.أ
-الخصم: {discount_value:.2f} د.أ
+الخصم المطبق: {discount_value:.2f} د.أ
 ----------------------------------------
-الإجمالي النهائي: {final_total:.2f} د.أ
+الصافي النهائي: {final_total:.2f} د.أ
+المبلغ المدفوع: {amount_paid:.2f} د.أ
+الباقي للزبون: {change_due:.2f} د.أ
 ========================================
     شكراً لتسوقكم معنا! نتمنى لكم يوماً سعيداً
                 """
                 
-                st.text_area("📄 معاينة الفاتورة الحرارية (80mm Thermal Receipt):", invoice_text, height=260)
-                st.download_button(
-                    label="🖨️ تنزيل وطباعة الفاتورة الحرارية (TXT)",
-                    data=invoice_text,
-                    file_name=f"Invoice_{sale_id}.txt",
-                    mime="text/plain"
-                )
+                st.text_area("📄 معاينة الفاتورة الحرارية:", invoice_text, height=270)
+                st.download_button("🖨️ تنزيل وطباعة الفاتورة (TXT)", data=invoice_text, file_name=f"Invoice_{sale_id}.txt", mime="text/plain")
 
         with col_display:
-            st.subheader("📋 قائمة المنتجات والبحث السريع")
-            search_query = st.text_input("🔍 بحث باسم المنتج أو التصنيف...", "", key="cashier_search")
-            
-            if search_query:
-                filtered_df = df_products[
-                    df_products["name"].str.contains(search_query, case=False, na=False) | 
-                    df_products["category"].str.contains(search_query, case=False, na=False)
-                ]
-            else:
-                filtered_df = df_products
+            st.subheader("🔍 البحث الفوري في المخزون")
+            search_query = st.text_input("ابحث باسم المنتج أو التصنيف...", "", key="cashier_search")
+            filtered_df = df_products[df_products["name"].str.contains(search_query, case=False, na=False) | df_products["category"].str.contains(search_query, case=False, na=False)] if search_query else df_products
 
             st.dataframe(
                 filtered_df[["id", "name", "category", "price", "stock"]],
@@ -288,92 +298,60 @@ if menu == "🏪 كاشير المبيعات":
                     "name": "اسم المنتج",
                     "category": "التصنيف",
                     "price": st.column_config.NumberColumn("السعر (د.أ)", format="%.2f د.أ"),
-                    "stock": st.column_config.NumberColumn("المخزون المتاح"),
+                    "stock": st.column_config.NumberColumn("المخزون"),
                 },
                 use_container_width=True,
                 hide_index=True
             )
 
 # ----------------------------------------------------
-# 2. قسم تنبيهات النقص (🚨 Low Stock Alerts)
+# 2. تنبيهات النقص
 # ----------------------------------------------------
 elif menu == "🚨 تنبيهات النقص":
     st.header("🚨 نظام تنبيهات المخزون المنخفض")
     df_products = get_products()
-    
     threshold = st.slider("حدد حد التنبيه للكميات المنخفضة:", min_value=1, max_value=20, value=5)
     low_stock = df_products[df_products["stock"] <= threshold]
     
     if low_stock.empty:
-        st.success("🎉 جميع المنتجات متوفرة بكميات ممتازة فوق حد التنبيه!")
+        st.success("🎉 جميع المنتجات متوفرة بكميات ممتازة!")
     else:
-        st.error(f"⚠️ يوجد ({len(low_stock)}) منتجات أوشكت على النفاد! يرجى إعادة طلبها فوراً:")
-        st.dataframe(
-            low_stock[["id", "name", "category", "stock"]],
-            column_config={
-                "id": "المُعرّف",
-                "name": "اسم المنتج",
-                "category": "التصنيف",
-                "stock": st.column_config.NumberColumn("الكمية المتبقية ⚠️"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        st.error(f"⚠️ يوجد ({len(low_stock)}) منتجات أوشكت على النفاد:")
+        st.dataframe(low_stock[["id", "name", "category", "stock"]], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------
-# 3. قسم سجل الذمم والديون (💳 Debt Management)
+# 3. سجل الذمم والديون
 # ----------------------------------------------------
 elif menu == "💳 سجل الذمم والديون":
-    st.header("💳 سجل المبيعات الآجلة والذمم المترتبة على الزبائن")
+    st.header("💳 سجل المبيعات الآجلة والذمم")
     df_sales = get_sales_history()
-    
     credit_sales = df_sales[df_sales["payment_method"].str.contains("آجل", na=False)]
     
     if credit_sales.empty:
-        st.success("🎉 لا توجد ديون أو ذمم آحلة على الزبائن حالياً!")
+        st.success("🎉 لا توجد ديون آحلة على الزبائن حالياً!")
     else:
-        total_credit = credit_sales["total_price"].sum()
-        st.warning(f"⚠️ إجمالي الديون القائمة على الزبائن: **{total_credit:.2f} د.أ**")
-        st.dataframe(
-            credit_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "date"]],
-            column_config={
-                "id": "رقم الفاتورة",
-                "customer_name": "اسم الزبون",
-                "customer_phone": "رقم الهاتف",
-                "product_name": "المنتج",
-                "quantity": "الكمية",
-                "total_price": st.column_config.NumberColumn("الدين المستحق (د.أ)", format="%.2f د.أ"),
-                "date": "التاريخ",
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        st.warning(f"⚠️ إجمالي الديون القائمة: **{credit_sales['total_price'].sum():.2f} د.أ**")
+        st.dataframe(credit_sales[["id", "customer_name", "customer_phone", "product_name", "quantity", "total_price", "date"]], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------
-# 4. قسم استرجاع المبيعات
+# 4. استرجاع المبيعات
 # ----------------------------------------------------
 elif menu == "🔄 استرجاع المبيعات":
-    st.header("🔄 قسم استرجاع وإرجاع المبيعات")
+    st.header("🔄 قسم استرجاع المبيعات")
     df_sales = get_sales_history()
     if df_sales.empty:
         st.info("لا توجد مبيعات مسجلة لإرجاعها.")
     else:
-        sale_to_refund = st.selectbox(
-            "اختر رقم الفاتورة لإرجاعها:", 
-            options=df_sales["id"].tolist(),
-            format_func=lambda x: f"فاتورة #{x} - {df_sales[df_sales['id']==x]['product_name'].values[0]}"
-        )
+        sale_to_refund = st.selectbox("اختر رقم الفاتورة لإرجاعها:", options=df_sales["id"].tolist())
         selected_sale = df_sales[df_sales["id"] == sale_to_refund].iloc[0]
-        
-        st.warning(f"⚠️ تفاصيل الفاتورة المراد إرجاعها:\n- اسم الزبون: **{selected_sale['customer_name']}**\n- المنتج: **{selected_sale['product_name']}**\n- المبلغ المسترد: **{selected_sale['total_price']:.2f} د.أ**")
-        
-        if st.button("❌ تأكيد استرجاع الفاتورة وإعادة الكمية للمخزن", type="primary"):
+        st.warning(f"تفاصيل الفاتورة المراد إرجاعها: **{selected_sale['product_name']}** (المبلغ: **{selected_sale['total_price']:.2f} د.أ**)")
+        if st.button("❌ تأكيد استرجاع الفاتورة", type="primary"):
             refund_sale(selected_sale["id"], selected_sale["product_name"], int(selected_sale["quantity"]))
             st.success("✅ تم إرجاع المبلغ واستعادة الكمية للمخزون بنجاح!")
             st.rerun()
 
 # ----------------------------------------------------
-# 5. قسم إدارة المخزون وتصنيف البيانات
+# 5. إدارة المخزون
 # ----------------------------------------------------
 elif menu == "📦 إدارة المخزون":
     st.header("📦 إدارة المنتجات والمخزون")
@@ -385,137 +363,128 @@ elif menu == "📦 إدارة المخزون":
             category = st.text_input("التصنيف")
             price = st.number_input("السعر (د.أ)", min_value=0.0, format="%.2f")
             stock = st.number_input("الكمية المتاحة", min_value=0, step=1)
-            
             submit = st.form_submit_button("إضافة المنتج إلى المخزن", type="primary")
-            if submit:
-                if name:
-                    add_product(name, category, price, stock)
-                    st.success("تمت إضافة المنتج بنجاح!")
-                    st.rerun()
+            if submit and name:
+                add_product(name, category, price, stock)
+                st.success("تمت إضافة المنتج بنجاح!")
+                st.rerun()
 
     with tab_edit_delete:
         df_products = get_products()
         if not df_products.empty:
             prod_to_edit = st.selectbox("اختر المنتج لتعديله أو حذفه:", df_products["name"].tolist(), key="edit_select")
             selected_row = df_products[df_products["name"] == prod_to_edit].iloc[0]
-            
             col_edit1, col_edit2 = st.columns(2)
             with col_edit1:
-                new_name = st.text_input("الاسم الجديد", value=selected_row["name"], key="edit_name")
-                new_cat = st.text_input("التصنيف الجديد", value=selected_row["category"], key="edit_cat")
-                new_price = st.number_input("السعر الجديد", value=float(selected_row["price"]), key="edit_price")
-                new_stock = st.number_input("الكمية الجديدة", value=int(selected_row["stock"]), key="edit_stock")
-                
-                if st.button("💾 تحديث البيانات", key="btn_update", use_container_width=True):
+                new_name = st.text_input("الاسم الجديد", value=selected_row["name"])
+                new_cat = st.text_input("التصنيف الجديد", value=selected_row["category"])
+                new_price = st.number_input("السعر الجديد", value=float(selected_row["price"]))
+                new_stock = st.number_input("الكمية الجديدة", value=int(selected_row["stock"]))
+                if st.button("💾 تحديث البيانات", use_container_width=True):
                     update_product(selected_row["id"], new_name, new_cat, new_price, new_stock)
-                    st.success("تم تحديث البيانات بنجاح!")
+                    st.success("تم التحديث بنجاح!")
                     st.rerun()
-            
             with col_edit2:
                 st.write("---")
-                if st.button("❌ حذف هذا المنتج نهائياً", type="primary", key="btn_delete", use_container_width=True):
+                if st.button("❌ حذف المنتج نهائياً", type="primary", use_container_width=True):
                     delete_product(selected_row["id"])
-                    st.success("تم حذف المنتج نهائياً!")
+                    st.success("تم الحذف بنجاح!")
                     st.rerun()
 
     st.divider()
-    st.subheader("📋 قائمة المخزون الحالية")
-    
-    # خيارات ترتيب المخزون
-    sort_option = st.selectbox("↕️ ترتيب المخزون حسب:", ["المُعرّف (الافتراضي)", "الأقل كمية بالمخزون", "الأعلى سعراً", "الأقل سعراً"])
-    df_disp = get_products()
-    if sort_option == "الأقل كمية بالمخزون":
-        df_disp = df_disp.sort_values(by="stock", ascending=True)
-    elif sort_option == "الأعلى سعراً":
-        df_disp = df_disp.sort_values(by="price", ascending=False)
-    elif sort_option == "الأقل سعراً":
-        df_disp = df_disp.sort_values(by="price", ascending=True)
-        
-    st.dataframe(df_disp, use_container_width=True)
+    st.dataframe(get_products(), use_container_width=True)
 
 # ----------------------------------------------------
-# 6. قسم السجل والتقارير الزمانية والرسوم البيانية
+# 6. طباعة بطاقات الأسعار والملصقات (🆕 الميزة الجديدة)
 # ----------------------------------------------------
-elif menu == "📊 السجل والتقارير الزمانية":
-    st.header("📊 السجل المالي والتحليلات الزمانية")
+elif menu == "🏷️ طباعة بطاقات الأسعار":
+    st.header("🏷️ مولد ملصقات الأسعار والرفوف (Price Tags)")
+    df_products = get_products()
+    
+    if df_products.empty:
+        st.info("لا توجد منتجات بالمخزن لتوليد ملصقات لها.")
+    else:
+        selected_tag_prod = st.selectbox("اختر المنتج لتوليد الملصق:", df_products["name"].tolist())
+        prod_data = df_products[df_products["name"] == selected_tag_prod].iloc[0]
+        
+        st.write("---")
+        st.subheader("🖼️ معاينة تصميم بطاقة السعر (Shelf Tag)")
+        
+        tag_html = f"""
+        <div style="border: 3px dashed #f59e0b; padding: 20px; border-radius: 12px; width: 320px; text-align: center; background-color: #1f2937; margin: auto;">
+            <h3 style="color: #f59e0b; margin: 0;">👑 متاجر المشاقبة</h3>
+            <p style="color: #9ca3af; font-size: 12px; margin-bottom: 10px;">AL-MASHAQBEH TRADING</p>
+            <hr style="border-color: #374151;">
+            <h2 style="color: #ffffff; margin: 10px 0;">{prod_data['name']}</h2>
+            <p style="color: #9ca3af; margin: 0;">التصنيف: {prod_data['category']}</p>
+            <h1 style="color: #10b981; font-size: 38px; margin: 15px 0;">{prod_data['price']:.2f} <span style="font-size:18px;">د.أ</span></h1>
+            <p style="color: #6b7280; font-size: 11px;">مُعرّف المنتج: #{prod_data['id']}</p>
+        </div>
+        """
+        st.markdown(tag_html, unsafe_allow_html=True)
+
+# ----------------------------------------------------
+# 7. السجل والتقارير المتقدمة وتحليل أوقات الذروة (🆕 الميزة الجديدة)
+# ----------------------------------------------------
+elif menu == "📊 السجل والتقارير المتقدمة":
+    st.header("📊 السجل المالي والتحليلات الزمانية وأوقات الذروة")
     df_sales = get_sales_history()
     
     if df_sales.empty:
         st.info("لا توجد مبيعات مسجلة حتى الآن.")
     else:
-        # فلترة السجل حسب التاريخ
         df_sales["date_dt"] = pd.to_datetime(df_sales["date"])
-        
-        st.subheader("🗓️ فلترة التقارير حسب التاريخ")
         date_filter = st.radio("اختر الفترة:", ["الكل", "اليوم", "آخر 7 أيام", "هذا الشهر"], horizontal=True)
-        
         today = datetime.datetime.now().date()
+        
         if date_filter == "اليوم":
             df_filtered = df_sales[df_sales["date_dt"].dt.date == today]
         elif date_filter == "آخر 7 أيام":
-            seven_days_ago = today - datetime.timedelta(days=7)
-            df_filtered = df_sales[df_sales["date_dt"].dt.date >= seven_days_ago]
+            df_filtered = df_sales[df_sales["date_dt"].dt.date >= (today - datetime.timedelta(days=7))]
         elif date_filter == "هذا الشهر":
             df_filtered = df_sales[(df_sales["date_dt"].dt.month == today.month) & (df_sales["date_dt"].dt.year == today.year)]
         else:
             df_filtered = df_sales
             
-        total_revenue = df_filtered["total_price"].sum()
-        total_items_sold = df_filtered["quantity"].sum()
-        total_discounts = df_filtered["discount"].sum() if "discount" in df_filtered.columns else 0.0
-        
         m1, m2, m3 = st.columns(3)
-        m1.metric(label="صافي أرباح الفترة المحدد", value=f"{total_revenue:.2f} د.أ")
-        m2.metric(label="القطع المباعة بالفترة", value=f"{int(total_items_sold)} قطعة")
-        m3.metric(label="الخصومات الممنوحة", value=f"{total_discounts:.2f} د.أ")
+        m1.metric("صافي الأرباح", f"{df_filtered['total_price'].sum():.2f} د.أ")
+        m2.metric("القطع المباعة", f"{int(df_filtered['quantity'].sum())} قطعة")
+        m3.metric("الخصومات الممنوحة", f"{df_filtered['discount'].sum():.2f} د.أ")
         
         st.divider()
-        st.subheader("📈 التحليلات والرسوم البيانية")
+        st.subheader("⏰ تحليل أوقات الذروة وساعات البيع (Peak Hours)")
         
-        chart_col1, chart_col2 = st.columns(2)
+        # استخراج الساعة من تاريخ البيع
+        df_filtered["hour"] = df_filtered["date_dt"].dt.hour
+        hourly_sales = df_filtered.groupby("hour")["total_price"].sum()
+        st.line_chart(hourly_sales)
         
-        with chart_col1:
-            st.markdown("##### 🏆 أكثر المنتجات إيراداً (د.أ)")
-            sales_by_prod = df_filtered.groupby("product_name")["total_price"].sum()
-            st.bar_chart(sales_by_prod)
+        st.divider()
+        st.subheader("🏆 أفضل المنتجات أداءً ومبيعات")
+        top_col1, top_col2 = st.columns(2)
+        
+        with top_col1:
+            st.markdown("##### 🥇 الأكثر مبيعاً (من حيث الإيرادات)")
+            top_revenue = df_filtered.groupby("product_name")["total_price"].sum().sort_values(ascending=False).head(5)
+            st.dataframe(top_revenue)
             
-        with chart_col2:
-            st.markdown("##### 💳 المبيعات حسب طريقة الدفع")
-            pay_dist = df_filtered.groupby("payment_method")["total_price"].sum()
-            st.bar_chart(pay_dist)
+        with top_col2:
+            st.markdown("##### 📦 الأكثر طلباً (من حيث عدد القطع)")
+            top_qty = df_filtered.groupby("product_name")["quantity"].sum().sort_values(ascending=False).head(5)
+            st.dataframe(top_qty)
 
         st.divider()
-        st.subheader("📥 تصدير السجل المالي")
-        csv_data = df_filtered.drop(columns=["date_dt"], errors="ignore").to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📊 تصدير البيانات المفلترة كملف CSV / Excel (.csv)",
-            data=csv_data,
-            file_name="Sales_Report_Mashaqa.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-            
-        st.divider()
-        st.subheader("📋 جدول الفواتير والسجلات التفصيلية")
-        st.dataframe(df_filtered.drop(columns=["date_dt"], errors="ignore"), use_container_width=True)
+        csv_data = df_filtered.drop(columns=["date_dt", "hour"], errors="ignore").to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📊 تصدير السجل (.csv)", data=csv_data, file_name="Sales_Report.csv", mime="text/csv", use_container_width=True)
+        st.dataframe(df_filtered.drop(columns=["date_dt", "hour"], errors="ignore"), use_container_width=True)
 
 # ----------------------------------------------------
-# 7. قسم النسخ الاحتياطي وإدارة النظام (⚙️ System & Backup)
+# 8. النسخ الاحتياطي والنظام
 # ----------------------------------------------------
 elif menu == "⚙️ النسخ الاحتياطي والنظام":
     st.header("⚙️ أدوات النظام والنسخ الاحتياطي")
-    st.write("يمكنك تحميل نسخة احتياطية كامِلة من قاعدة البيانات للحفاظ على سلامة المبيعات والمخزون.")
-    
     try:
         with open(DB_NAME, "rb") as db_file:
-            db_bytes = db_file.read()
-            
-        st.download_button(
-            label="💾 تحميل النسخة الاحتياطية لقاعدة البيانات (web_store.db)",
-            data=db_bytes,
-            file_name="web_store_backup.db",
-            mime="application/x-sqlite3",
-            type="primary"
-        )
+            st.download_button("💾 تحميل النسخة الاحتياطية (.db)", data=db_file.read(), file_name="web_store_backup.db", mime="application/x-sqlite3", type="primary")
     except Exception as e:
-        st.error(f"لم يتم العثور على قاعدة البيانات بعد: {e}")
+        st.error(f"خطأ في الوصول لقاعدة البيانات: {e}")
