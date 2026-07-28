@@ -1243,13 +1243,13 @@ elif menu == "📊 السجل والتقارير المتقدمة":
 
             csv_export = disp_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
-                "📥 تصدير التقرير المالي الحالي إلى CSV/Excel", 
-                data=csv_export, 
-                file_name=f"Financial_Report_{datetime.date.today()}.csv", 
-                mime="text/csv", 
-                type="primary", 
-                use_container_width=True
-            )se_container_width=True)
+            "📥 تصدير التقرير المالي الحالي إلى CSV/Excel", 
+            data=csv_export, 
+            file_name=f"Financial_Report_{datetime.date.today()}.csv", 
+            mime="text/csv", 
+            type="primary", 
+            use_container_width=True
+        )
 
 # ----------------------------------------------------
 # 8. النسخ الاحتياطي والنظام
