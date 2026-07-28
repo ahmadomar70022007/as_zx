@@ -120,6 +120,8 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user_role" not in st.session_state:
     st.session_state["user_role"] = None
+if "cart" not in st.session_state:
+    st.session_state["cart"] = []
 
 def check_credentials(user, pwd):
     user = user.strip().lower()
@@ -160,6 +162,7 @@ st.sidebar.markdown(f"👤 **المستخدم الحالي:** `{st.session_state
 if st.sidebar.button("🚪 تسجيل الخروج"):
     st.session_state["logged_in"] = False
     st.session_state["user_role"] = None
+    st.session_state["cart"] = []
     st.rerun()
 
 st.divider()
@@ -167,7 +170,7 @@ st.divider()
 # القوائم المتاحة حسب الصلاحيات
 if st.session_state["user_role"] == "Admin":
     menu_options = [
-        "🏪 كاشير المبيعات", 
+        "🏪 كاشير المبيعات المطور", 
         "🚨 تنبيهات النقص", 
         "💳 سجل الذمم والديون",
         "🔄 استرجاع المبيعات", 
@@ -177,132 +180,169 @@ if st.session_state["user_role"] == "Admin":
         "⚙️ النسخ الاحتياطي والنظام"
     ]
 else:
-    menu_options = ["🏪 كاشير المبيعات"]
+    menu_options = ["🏪 كاشير المبيعات المطور"]
 
 menu = st.sidebar.radio("🔱 القائمة الرئيسية", menu_options)
 
 # ----------------------------------------------------
-# 1. كاشير المبيعات
+# 1. قسم كاشير المبيعات المطور والمميز جداً
 # ----------------------------------------------------
-if menu == "🏪 كاشير المبيعات":
-    st.header("🛒 قسم المبيعات والكاشير التفاعلي")
+if menu == "🏪 كاشير المبيعات المطور":
+    st.header("🛒 نقطة البيع الذكية (Smart POS Cashier)")
     df_products = get_products()
     
     if df_products.empty:
-        st.info("💡 لا توجد منتجات في المخزون حالياً.")
+        st.info("💡 لا توجد منتجات بالمخزن حالياً، يرجى إضافتها أولاً.")
     else:
-        col_action, col_display = st.columns([1.3, 1], gap="large")
+        col_products, col_cart = st.columns([1.4, 1], gap="large")
         
-        with col_action:
-            st.subheader("👤 بيانات الزبون")
-            c_col1, c_col2 = st.columns(2)
-            with c_col1:
-                c_name = st.text_input("اسم الزبون:", value="عميل نقدي", key="cashier_cname")
-            with c_col2:
-                c_phone = st.text_input("رقم هاتف الزبون:", value="-", key="cashier_cphone")
+        # --- القسم الأيسر: تصفح المنتجات والبحث السريع ---
+        with col_products:
+            st.subheader("📦 المنتجات المتاحة")
             
+            search_q = st.text_input("🔍 بحث سريع عن منتج بالاسم أو التصنيف...", key="pos_search")
+            if search_q:
+                filtered_prods = df_products[df_products["name"].str.contains(search_q, case=False, na=False) | df_products["category"].str.contains(search_q, case=False, na=False)]
+            else:
+                filtered_prods = df_products
+                
             st.write("---")
-            st.subheader("🛍️ تفاصيل الطلب")
-            product_list = df_products["name"].tolist()
-            selected_product_name = st.selectbox("اختر المنتج:", options=product_list, key="cashier_select")
             
-            prod_info = df_products[df_products["name"] == selected_product_name].iloc[0]
+            # اختيارات إضافة منتج إلى السلة
+            selected_p_name = st.selectbox("🎯 اختر المنتج للتفاصيل والإضافة:", filtered_prods["name"].tolist(), key="select_prod_cart")
+            p_data = df_products[df_products["name"] == selected_p_name].iloc[0]
             
-            # عرض المقاييس وشريط المخزون المرئي
             m1, m2, m3 = st.columns(3)
-            m1.metric("💰 سعر القطعة", f"{prod_info['price']:.2f} د.أ")
-            m2.metric("📦 المخزون", f"{prod_info['stock']} قطعة")
+            m1.metric("💰 سعر القطعة", f"{p_data['price']:.2f} د.أ")
+            m2.metric("📦 المتوفر بالمخزن", f"{p_data['stock']} قطعة")
             
-            if prod_info['stock'] == 0:
+            if p_data['stock'] == 0:
                 m3.metric("الحالة", "❌ نافد", delta_color="inverse")
-            elif prod_info['stock'] <= 5:
+            elif p_data['stock'] <= 5:
                 m3.metric("الحالة", "⚠️ منخفض", delta_color="off")
             else:
                 m3.metric("الحالة", "✅ ممتاز")
 
-            max_qty = int(prod_info['stock']) if prod_info['stock'] > 0 else 1
-            qty = st.number_input("الكمية المطلوبة:", min_value=1, max_value=max_qty, value=1, disabled=(prod_info['stock'] == 0))
-            
-            p_col1, p_col2 = st.columns(2)
-            with p_col1:
-                pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
-            with p_col2:
-                discount_type = st.radio("نوع الخصم:", ["بدون خصم", "نسبة (%)", "مبلغ (د.أ)"], horizontal=True)
+            # شريط نسبة المخزون المتبقي
+            stock_pct = min(1.0, float(p_data['stock']) / 50.0) if p_data['stock'] > 0 else 0.0
+            st.caption("مؤشر نسبة المخزون المتاح:")
+            st.progress(stock_pct)
 
-            subtotal = qty * prod_info['price']
-            discount_value = 0.0
+            max_q = int(p_data['stock']) if p_data['stock'] > 0 else 1
+            add_qty = st.number_input("الكمية المراد إضافتها للسلة:", min_value=1, max_value=max_q, value=1, disabled=(p_data['stock'] == 0))
             
-            if discount_type == "نسبة (%)":
-                pct = st.number_input("النسبة (%):", min_value=0.0, max_value=100.0, value=0.0)
-                discount_value = (subtotal * pct) / 100.0
-            elif discount_type == "مبلغ (د.أ)":
-                discount_value = st.number_input("المبلغ (د.أ):", min_value=0.0, max_value=float(subtotal), value=0.0)
-            
-            final_total = max(0.0, subtotal - discount_value)
-            
+            if st.button("➕ إضافة المنتج إلى سلة المشتريات", type="primary", use_container_width=True, disabled=(p_data['stock'] == 0)):
+                # إضافة للسلة
+                st.session_state["cart"].append({
+                    "id": p_data["id"],
+                    "name": p_data["name"],
+                    "price": float(p_data["price"]),
+                    "qty": int(add_qty),
+                    "total": float(p_data["price"] * add_qty)
+                })
+                st.success(f"إضافة ({add_qty}) من [{p_data['name']}] إلى السلة بنجاح!")
+                st.rerun()
+
             st.write("---")
-            if "نقداً" in pay_method:
-                paid_col, change_col = st.columns(2)
-                with paid_col:
-                    amount_paid = st.number_input("💵 المبلغ المدفوع من الزبون (د.أ):", min_value=0.0, value=float(final_total))
-                with change_col:
-                    change_due = max(0.0, amount_paid - final_total)
-                    st.metric("🪙 الباقي للزبون", f"{change_due:.2f} د.أ")
-            else:
-                amount_paid = final_total
-                change_due = 0.0
+            st.subheader("📋 جدول استعراض المخزون")
+            st.dataframe(filtered_prods[["id", "name", "category", "price", "stock"]], use_container_width=True, hide_index=True)
 
-            st.markdown(f"#### 💵 الفرعي: `{subtotal:.2f} د.أ` | 🏷️ الخصم: <span style='color:#ef4444;'>-{discount_value:.2f} د.أ</span>", unsafe_allow_html=True)
-            st.markdown(f"### 💳 صافي الفاتورة: <span style='color:#f59e0b;'>{final_total:.2f} د.أ</span>", unsafe_allow_html=True)
+        # --- القسم الأيمن: سلة المشتريات والحسابات والطباعة ---
+        with col_cart:
+            st.subheader("🛒 سلة الفاتورة الحالية")
             
-            if st.button("✨ إتمام العملية وطباعة الفاتورة", use_container_width=True, type="primary", disabled=(prod_info['stock'] == 0)):
-                sale_id = record_sale(c_name, c_phone, prod_info['id'], prod_info['name'], qty, discount_value, pay_method, final_total)
-                st.success(f"✅ تم تسجيل عملية البيع بنجاح! (رقم الفاتورة: #{sale_id})")
+            if not st.session_state["cart"]:
+                st.info("🛒 السلة فارغة حالياً. قم باختيار المنتجات وإضافتها السلة.")
+            else:
+                cart_df = pd.DataFrame(st.session_state["cart"])
+                st.dataframe(cart_df[["name", "qty", "price", "total"]], column_config={
+                    "name": "المنتج",
+                    "qty": "الكمية",
+                    "price": st.column_config.NumberColumn("السعر", format="%.2f د.أ"),
+                    "total": st.column_config.NumberColumn("الإجمالي", format="%.2f د.أ")
+                }, use_container_width=True, hide_index=True)
+
+                if st.button("🗑️ تفريغ السلة بالكامل", type="secondary"):
+                    st.session_state["cart"] = []
+                    st.rerun()
+
+                st.write("---")
+                st.subheader("👤 بيانات الزبون وطريقة الدفع")
+                c_name = st.text_input("اسم الزبون:", value="عميل نقدي", key="cart_cname")
+                c_phone = st.text_input("رقم هاتف الزبون:", value="-", key="cart_cphone")
                 
-                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                invoice_text = f"""
+                pay_method = st.selectbox("💳 طريقة الدفع:", ["نقداً (Cash)", "كليك (CliQ)", "بطاقة (Visa)", "آجل / ذمم (Credit)"])
+                
+                # حساب المبالغ والخصم
+                raw_cart_total = sum(item["total"] for item in st.session_state["cart"])
+                
+                st.write("---")
+                st.subheader("🎟️ الخصم المطبق")
+                disc_type = st.radio("نوع الخصم:", ["بدون خصم", "نسبة (%)", "مبلغ (د.أ)"], horizontal=True, key="cart_disc_type")
+                
+                discount_val = 0.0
+                if disc_type == "نسبة (%)":
+                    p_disc = st.number_input("النسبة (%):", min_value=0.0, max_value=100.0, value=0.0)
+                    discount_val = (raw_cart_total * p_disc) / 100.0
+                elif disc_type == "مبلغ (د.أ)":
+                    discount_val = st.number_input("المبلغ (د.أ):", min_value=0.0, max_value=float(raw_cart_total), value=0.0)
+
+                final_cart_total = max(0.0, raw_cart_total - discount_val)
+
+                # حاسبة الباقي
+                if "نقداً" in pay_method:
+                    p_col, c_col = st.columns(2)
+                    with p_col:
+                        paid_amount = st.number_input("💵 المدفوع (د.أ):", min_value=0.0, value=float(final_cart_total))
+                    with c_col:
+                        change_amt = max(0.0, paid_amount - final_cart_total)
+                        st.metric("🪙 الباقي للزبون", f"{change_amt:.2f} د.أ")
+                else:
+                    paid_amount = final_cart_total
+                    change_amt = 0.0
+
+                st.markdown(f"#### 💵 الفرعي: `{raw_cart_total:.2f} د.أ` | 🏷️ الخصم: <span style='color:#ef4444;'>-{discount_val:.2f} د.أ</span>", unsafe_allow_html=True)
+                st.markdown(f"### 💳 صافي الفاتورة: <span style='color:#f59e0b;'>{final_cart_total:.2f} د.أ</span>", unsafe_allow_html=True)
+
+                if st.button("✨ اعتماد وإتمام الفاتورة وطباعتها", type="primary", use_container_width=True):
+                    # تسجيل المبيعات لكل المنتجات في السلة
+                    last_sale_id = None
+                    items_summary_txt = ""
+                    for item in st.session_state["cart"]:
+                        sale_id = record_sale(c_name, c_phone, item["id"], item["name"], item["qty"], discount_val, pay_method, item["total"])
+                        last_sale_id = sale_id
+                        items_summary_txt += f"{item['name']} (x{item['qty']}) - {item['total']:.2f} د.أ\n"
+                    
+                    st.success("✅ تم إتمام وتخزين جميع عناصر الفاتورة بنجاح!")
+                    
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                    invoice_text = f"""
 ========================================
          👑 متاجر المشاقبة 👑
      AL-MASHAQBEH TRADING CO.
 ========================================
 التاريخ: {now_str}
-رقم الفاتورة: #{sale_id}
+رقم الفاتورة: #{last_sale_id}
 اسم الزبون: {c_name}
 هاتف الزبون: {c_phone}
 طريقة الدفع: {pay_method}
 ----------------------------------------
-المنتج: {prod_info['name']}
-الكمية: {qty}  x  {prod_info['price']:.2f} د.أ
-المجموع الفرعي: {subtotal:.2f} د.أ
-الخصم المطبق: {discount_value:.2f} د.أ
-----------------------------------------
-الصافي النهائي: {final_total:.2f} د.أ
-المبلغ المدفوع: {amount_paid:.2f} د.أ
-الباقي للزبون: {change_due:.2f} د.أ
+المنتجات المشتراة:
+{items_summary_txt}----------------------------------------
+المجموع الفرعي: {raw_cart_total:.2f} د.أ
+الخصم المطبق: {discount_val:.2f} د.أ
+الصافي النهائي: {final_cart_total:.2f} د.أ
+المبلغ المدفوع: {paid_amount:.2f} د.أ
+الباقي للزبون: {change_amt:.2f} د.أ
 ========================================
     شكراً لتسوقكم معنا! نتمنى لكم يوماً سعيداً
-                """
-                
-                st.text_area("📄 معاينة الفاتورة الحرارية:", invoice_text, height=270)
-                st.download_button("🖨️ تنزيل وطباعة الفاتورة (TXT)", data=invoice_text, file_name=f"Invoice_{sale_id}.txt", mime="text/plain")
-
-        with col_display:
-            st.subheader("🔍 البحث الفوري في المخزون")
-            search_query = st.text_input("ابحث باسم المنتج أو التصنيف...", "", key="cashier_search")
-            filtered_df = df_products[df_products["name"].str.contains(search_query, case=False, na=False) | df_products["category"].str.contains(search_query, case=False, na=False)] if search_query else df_products
-
-            st.dataframe(
-                filtered_df[["id", "name", "category", "price", "stock"]],
-                column_config={
-                    "id": "المُعرّف",
-                    "name": "اسم المنتج",
-                    "category": "التصنيف",
-                    "price": st.column_config.NumberColumn("السعر (د.أ)", format="%.2f د.أ"),
-                    "stock": st.column_config.NumberColumn("المخزون"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
+                    """
+                    
+                    st.text_area("📄 معاينة الإيصال الحراري:", invoice_text, height=270)
+                    st.download_button("🖨️ تنزيل وطباعة الإيصال (TXT)", data=invoice_text, file_name=f"Receipt_{last_sale_id}.txt", mime="text/plain")
+                    
+                    # تفريغ السلة بعد البيع
+                    st.session_state["cart"] = []
 
 # ----------------------------------------------------
 # 2. تنبيهات النقص
@@ -395,7 +435,7 @@ elif menu == "📦 إدارة المخزون":
     st.dataframe(get_products(), use_container_width=True)
 
 # ----------------------------------------------------
-# 6. طباعة بطاقات الأسعار والملصقات (🆕 الميزة الجديدة)
+# 6. طباعة بطاقات الأسعار والملصقات
 # ----------------------------------------------------
 elif menu == "🏷️ طباعة بطاقات الأسعار":
     st.header("🏷️ مولد ملصقات الأسعار والرفوف (Price Tags)")
@@ -424,7 +464,7 @@ elif menu == "🏷️ طباعة بطاقات الأسعار":
         st.markdown(tag_html, unsafe_allow_html=True)
 
 # ----------------------------------------------------
-# 7. السجل والتقارير المتقدمة وتحليل أوقات الذروة (🆕 الميزة الجديدة)
+# 7. السجل والتقارير المتقدمة
 # ----------------------------------------------------
 elif menu == "📊 السجل والتقارير المتقدمة":
     st.header("📊 السجل المالي والتحليلات الزمانية وأوقات الذروة")
@@ -453,8 +493,6 @@ elif menu == "📊 السجل والتقارير المتقدمة":
         
         st.divider()
         st.subheader("⏰ تحليل أوقات الذروة وساعات البيع (Peak Hours)")
-        
-        # استخراج الساعة من تاريخ البيع
         df_filtered["hour"] = df_filtered["date_dt"].dt.hour
         hourly_sales = df_filtered.groupby("hour")["total_price"].sum()
         st.line_chart(hourly_sales)
