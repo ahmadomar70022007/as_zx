@@ -1067,16 +1067,3 @@ elif menu == "💾 النسخ الاحتياطي":
         type="primary",
         use_container_width=True,
     )
-
-
-elif print(ddkkbd
-           oejjrjjrj)
-(aj,sf 
- se'tfj jiddjkkddn ajdh fo;;l  sjig  fbf lepejr  pkdcdd w[EnvironmentErrorffoor])
- epekre EOFError PendingDeprecationWarning  p_row ellipsis e0 open ReferenceError  EOFError
- OSError def  ord def
-  ej  je next_day_idx KeyboardInterrupt
-  kdkw   e  ek  je
-    KeyboardInterrupt KeyboardInterrupt
-    ellipsise   ellipsis IndexError dk
-    
