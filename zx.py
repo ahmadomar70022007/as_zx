@@ -1,19 +1,29 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
 import datetime
+import io
+from operator import add
+import os
+import sqlite3
+import urllib.parse
+import barcode
+from barcode.writer import ImageWriter
+from fpdf import FPDF
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
 # ----------------------------------------------------
-# 1. إعدادات الصفحة والهوية البصرية باللون الذهبي
+# 1. إعدادات الصفحة والهوية البصرية
 # ----------------------------------------------------
 st.set_page_config(
-    page_title="نظام الهاشمية للمبيعات والمخزون",
+    page_title="نظام إدارة المبيعات والمخزون - مشروع التخرج",
     page_icon="👑",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
+st.markdown(
+    """
 <style>
     .stApp {
         background-color: #0b0f19;
@@ -37,13 +47,6 @@ st.markdown("""
     div[data-testid="stMetricValue"] {
         color: #f59e0b !important;
     }
-    .gold-box {
-        border: 2px solid #f59e0b;
-        padding: 12px;
-        border-radius: 10px;
-        background-color: #111827;
-        margin-bottom: 10px;
-    }
     .welcome-card {
         border: 2px solid #d97706;
         background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
@@ -54,19 +57,29 @@ st.markdown("""
         margin: auto;
         max-width: 500px;
     }
+    .product-card {
+        background-color: #111827;
+        border: 1px solid #1f2937;
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 8px;
+    }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-DB_NAME = "al_hashemiah_pos.db"
+DB_NAME = "graduation_project_pos.db"
+
 
 # ----------------------------------------------------
 # 2. إنشاء وتحديث قاعدة البيانات
 # ----------------------------------------------------
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    
-    c.execute('''
+  conn = sqlite3.connect(DB_NAME)
+  c = conn.cursor()
+
+  c.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             barcode TEXT UNIQUE NOT NULL,
@@ -77,9 +90,9 @@ def init_db():
             stock INTEGER NOT NULL,
             min_stock INTEGER DEFAULT 5
         )
-    ''')
-    
-    c.execute('''
+    """)
+
+  c.execute("""
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
@@ -89,32 +102,55 @@ def init_db():
             total_price REAL NOT NULL,
             discount REAL DEFAULT 0.0,
             net_profit REAL NOT NULL,
-            payment_method TEXT NOT NULL,
-            seller_username TEXT DEFAULT 'admin'
+            seller_username TEXT DEFAULT 'admin',
+            payment_type TEXT DEFAULT 'نقدي'
         )
-    ''')
+    """)
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS debts (
+  c.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_name TEXT NOT NULL,
-            amount REAL NOT NULL,
-            date TEXT NOT NULL,
-            notes TEXT,
-            status TEXT DEFAULT 'غير مدفوع'
+            name TEXT UNIQUE NOT NULL,
+            phone TEXT,
+            points INTEGER DEFAULT 0,
+            total_spent REAL DEFAULT 0.0,
+            debt REAL DEFAULT 0.0,
+            tier TEXT DEFAULT 'عادي'
         )
-    ''')
+    """)
 
-    c.execute('''
+  c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT NOT NULL
         )
-    ''')
+    """)
 
-    c.execute('''
+  c.execute("""
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            title TEXT NOT NULL,
+            amount REAL NOT NULL,
+            category TEXT,
+            notes TEXT
+        )
+    """)
+
+  c.execute("""
+        CREATE TABLE IF NOT EXISTS purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            supplier_name TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            total_cost REAL NOT NULL
+        )
+    """)
+
+  c.execute("""
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
@@ -122,829 +158,925 @@ def init_db():
             action TEXT NOT NULL,
             details TEXT
         )
-    ''')
-    
-    c.execute("SELECT COUNT(*) FROM users")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("admin", "admin123", "Admin"))
-        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("cashier1", "1234", "Cashier"))
-        
-    conn.commit()
-    conn.close()
+    """)
+
+  c.execute("SELECT COUNT(*) FROM users")
+  if c.fetchone()[0] == 0:
+    c.execute(
+        "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+        ("admin", "123", "مدير النظام"),
+    )
+    c.execute(
+        "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+        ("cashier", "123", "موظف مبيعات"),
+    )
+
+  c.execute("SELECT COUNT(*) FROM customers")
+  if c.fetchone()[0] == 0:
+    c.execute(
+        "INSERT INTO customers (name, phone, points, total_spent, debt, tier)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        ("زبون عام", "0700000000", 0, 0.0, 0.0, "عادي"),
+    )
+
+  conn.commit()
+  conn.close()
+
 
 init_db()
 
+
 def log_action(username, action, details):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO audit_logs (timestamp, username, action, details) VALUES (?, ?, ?, ?)",
-              (now_str, username, action, details))
-    conn.commit()
-    conn.close()
+  conn = sqlite3.connect(DB_NAME)
+  c = conn.cursor()
+  now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  c.execute(
+      "INSERT INTO audit_logs (timestamp, username, action, details) VALUES"
+      " (?, ?, ?, ?)",
+      (now_str, username, action, details),
+  )
+  conn.commit()
+  conn.close()
+
+
+def generate_pdf_invoice(
+    invoice_id, cust_name, items, subtotal, discount, grand_total
+):
+  pdf = FPDF()
+  pdf.add_page()
+  pdf.set_font("Arial", "B", 16)
+  pdf.cell(200, 10, txt="Graduation Project Store - Invoice", ln=True, align="C")
+
+  pdf.set_font("Arial", "", 12)
+  pdf.cell(200, 8, txt=f"Invoice ID: #{invoice_id}", ln=True, align="R")
+  pdf.cell(
+      200,
+      8,
+      txt=f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
+      ln=True,
+      align="R",
+  )
+  pdf.cell(200, 8, txt=f"Customer: {cust_name}", ln=True, align="R")
+  pdf.ln(5)
+
+  pdf.set_font("Arial", "B", 10)
+  pdf.cell(80, 8, "Product", 1, 0, "C")
+  pdf.cell(30, 8, "Qty", 1, 0, "C")
+  pdf.cell(40, 8, "Price", 1, 0, "C")
+  pdf.cell(40, 8, "Total", 1, 1, "C")
+
+  pdf.set_font("Arial", "", 10)
+  for item in items:
+    pdf.cell(80, 8, str(item["name"]), 1, 0, "L")
+    pdf.cell(30, 8, str(item["quantity"]), 1, 0, "C")
+    pdf.cell(40, 8, f"{item['price']:.2f}", 1, 0, "C")
+    pdf.cell(40, 8, f"{item['subtotal']:.2f}", 1, 1, "C")
+
+  pdf.ln(5)
+  pdf.cell(200, 6, txt=f"Subtotal: {subtotal:.2f} JOD", ln=True, align="R")
+  pdf.cell(200, 6, txt=f"Discount: {discount:.2f} JOD", ln=True, align="R")
+  pdf.set_font("Arial", "B", 12)
+  pdf.cell(
+      200, 8, txt=f"Grand Total: {grand_total:.2f} JOD", ln=True, align="R"
+  )
+
+  return pdf.output(dest="S").encode("latin1")
+
+
+def create_barcode_image(barcode_text):
+  rv = io.BytesIO()
+  Code128 = barcode.get_barcode_class("code128")
+  code_instance = Code128(barcode_text, writer=ImageWriter())
+  code_instance.write(rv)
+  return rv.getvalue()
+
 
 # ----------------------------------------------------
-# 3. إدارة جلسة تسجيل الدخول (Authentication State)
+# 3. إدارة جلسة تسجيل الدخول
 # ----------------------------------------------------
 if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+  st.session_state["authenticated"] = False
 if "logged_user" not in st.session_state:
-    st.session_state["logged_user"] = None
+  st.session_state["logged_user"] = None
 if "user_role" not in st.session_state:
-    st.session_state["user_role"] = None
+  st.session_state["user_role"] = None
 if "cart" not in st.session_state:
-    st.session_state["cart"] = []
+  st.session_state["cart"] = []
 
-# ----------------------------------------------------
-# 4. شاشة تسجيل الدخول المخصصة مع الترحيب 🔒
-# ----------------------------------------------------
 if not st.session_state["authenticated"]:
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    
-    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
-    with col_l2:
-        st.markdown("""
+  st.markdown("<br><br>", unsafe_allow_html=True)
+  col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+  with col_l2:
+    st.markdown(
+        """
         <div class="welcome-card">
-            <h1 style="color: #f59e0b; margin-bottom: 5px;">👑 متجر الهاشمية</h1>
-            <h3 style="color: #f8fafc; font-size: 18px; margin-top: 0;">أهلاً وسهلاً بكم في نظام المبيعات والمخزون الذكي</h3>
-            <p style="color: #9ca3af; font-size: 13px;">يرجى إدخال بيانات حسابك لتسجيل الدخول لبدء العمليات</p>
+            <h1 style="color: #f59e0b; margin-bottom: 5px;">👑 نظام إدارة المبيعات</h1>
+            <h3 style="color: #f8fafc; font-size: 18px; margin-top: 0;">مشروع التخرج الأكاديمي الذكي</h3>
+            <p style="color: #9ca3af; font-size: 13px;">يرجى تسجيل الدخول للبدء</p>
         </div>
-        """, unsafe_allow_html=True)
-        st.write("")
+        """,
+        unsafe_allow_html=True,
+    )
+    st.write("")
 
-        with st.form("login_form", clear_on_submit=False):
-            username_input = st.text_input("👤 اسم المستخدم:")
-            password_input = st.text_input("🔑 كلمة السر:", type="password")
-            
-            submit_login = st.form_submit_button("🔓 تسجيل الدخول", type="primary", use_container_width=True)
-            
-            if submit_login:
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
-                c.execute("SELECT role FROM users WHERE username = ? AND password = ?", (username_input, password_input))
-                user_match = c.fetchone()
-                conn.close()
+    with st.form("login_form"):
+      username_input = st.text_input("👤 اسم المستخدم:")
+      password_input = st.text_input("🔑 كلمة السر:", type="password")
+      submit_login = st.form_submit_button(
+          "🔓 تسجيل الدخول", type="primary", use_container_width=True
+      )
 
-                if user_match:
-                    st.session_state["authenticated"] = True
-                    st.session_state["logged_user"] = username_input
-                    st.session_state["user_role"] = user_match[0]
-                    log_action(username_input, "تسجيل دخول", "تم تسجيل الدخول بنجاح للنظام")
-                    st.success(f"مرحباً بك مجدداً {username_input}!")
-                    st.rerun()
-                else:
-                    st.error("❌ خطأ: اسم المستخدم أو كلمة السر غير صحيحة!")
+      if submit_login:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "SELECT role FROM users WHERE username = ? AND password = ?",
+            (username_input, password_input),
+        )
+        user_match = c.fetchone()
+        conn.close()
 
-    st.stop()
+        if user_match:
+          st.session_state["authenticated"] = True
+          st.session_state["logged_user"] = username_input
+          st.session_state["user_role"] = user_match[0]
+          log_action(username_input, "تسجيل دخول", "تسجيل دخول ناجح للنظام")
+          st.rerun()
+        else:
+          st.error("❌ اسم المستخدم أو كلمة السر غير صحيحة!")
+  st.stop()
 
 # ----------------------------------------------------
-# 5. القائمة الجانبية وزر خروج الفعلي 🚪
+# 4. الشريط الجانبي والأدوات المتقدمة
 # ----------------------------------------------------
-st.sidebar.title("👑 متجر الهاشمية")
+conn = sqlite3.connect(DB_NAME)
+low_stock_count = pd.read_sql_query(
+    "SELECT COUNT(*) FROM products WHERE stock <= min_stock", conn
+).iloc[0, 0]
+conn.close()
+
+st.sidebar.title("👑 لوحة التحكم الرئيسية")
 st.sidebar.markdown(f"👤 **المستخدم:** `{st.session_state['logged_user']}`")
 st.sidebar.markdown(f"🛡️ **الصلاحية:** `{st.session_state['user_role']}`")
 
+with st.sidebar.expander("💱 محول العملات السريع"):
+  currency_choice = st.selectbox(
+      "العملة المعروضة:", ["دينار أردني (JOD)", "دولار أمريكي (USD)"]
+  )
+  exchange_rate = 1.41 if "USD" in currency_choice else 1.0
+
+if low_stock_count > 0:
+  st.sidebar.markdown(
+      f"""
+    <div style="background-color: #7f1d1d; border: 1px solid #ef4444; padding: 8px; border-radius: 8px; margin-bottom: 10px; font-size: 13px; text-align: center;">
+        🔔 <b>تنبيهات النظام:</b><br>
+        ⚠️ منتجات وصلت للحد الأدنى: <b>{low_stock_count}</b>
+    </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
-    log_action(st.session_state["logged_user"], "تسجيل خروج", "تم تسجيل الخروج من النظام")
-    st.session_state["authenticated"] = False
-    st.session_state["logged_user"] = None
-    st.session_state["user_role"] = None
-    st.session_state["cart"] = []
-    st.rerun()
+  st.session_state["authenticated"] = False
+  st.rerun()
 
 st.sidebar.write("---")
 
-current_role = st.session_state.get("user_role", "Cashier")
+current_role = st.session_state.get("user_role", "موظف مبيعات")
 
-if current_role == "Admin":
-    menu_options = [
-        "🛒 كاشير المبيعات (POS)",
-        "🚨 تنبيهات النقص وإعادة التزويد",
-        "📙 سجل الذمم وتسديد الديون",
-        "🔄 إرجاع واستبدال الفواتير",
-        "📦 إدارة وتعديل المخزون",
-        "🏷️ طباعة بطاقات الأسعار",
-        "📊 التقارير المالية والأرباح",
-        "📜 سجل الأحداث والرقابة (Audit Log)",
-        "⚙️ النسخ الاحتياطي للنظام",
-        "👥 إدارة الحسابات والصلاحيات"
-    ]
-elif current_role == "Inventory":
-    menu_options = [
-        "📦 إدارة وتعديل المخزون",
-        "🚨 تنبيهات النقص وإعادة التزويد",
-        "🏷️ طباعة بطاقات الأسعار",
-        "👥 إدارة الحسابات والصلاحيات"
-    ]
+if current_role == "مدير النظام":
+  menu_options = [
+      "🛒 كاشير المبيعات (POS)",
+      "📊 لوحة المؤشرات الذكية",
+      "🤖 التنبؤ الذكي بالمبيعات (AI)",
+      "📖 إدارة الديون والذمم المالية",
+      "🚨 تنبيهات نقص المخزون",
+      "👥 إدارة العملاء وبرنامج الولاء (CRM)",
+      "📦 إدارة المنتجات وتوليد الباركود",
+      "💸 المصروفات والنثريات المالية",
+      "🚚 طلبات الموردين والشراء",
+      "📈 أرباح المنتجات والتقارير",
+      "⚙️ إدارة المستخدمين والصلاحيات",
+      "📜 سجل الرقابة الأمنية (Audit Log)",
+      "💾 النسخ الاحتياطي",
+  ]
 else:
-    menu_options = [
-        "🛒 كاشير المبيعات (POS)",
-        "🔄 إرجاع واستبدال الفواتير",
-        "📙 سجل الذمم وتسديد الديون",
-        "👥 إدارة الحسابات والصلاحيات"
-    ]
+  menu_options = [
+      "🛒 كاشير المبيعات (POS)",
+      "📖 إدارة الديون والذمم المالية",
+      "👥 إدارة العملاء وبرنامج الولاء (CRM)",
+      "📦 إدارة المنتجات وتوليد الباركود",
+  ]
 
-menu = st.sidebar.radio("القائمة الرئيسية 🔱", menu_options)
+menu = st.sidebar.radio("الأقسام المتاحة 🔱", menu_options)
+
 
 def get_products():
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM products", conn)
-    conn.close()
-    return df
+  conn = sqlite3.connect(DB_NAME)
+  df = pd.read_sql_query("SELECT * FROM products", conn)
+  conn.close()
+  return df
+
 
 # ----------------------------------------------------
-# 1. كاشير المبيعات
+# 1. كاشير المبيعات (POS)
 # ----------------------------------------------------
 if menu == "🛒 كاشير المبيعات (POS)":
-    st.header("🛒 نقطة البيع السريعة - متجر الهاشمية")
-    df_products = get_products()
+  st.header("🛒 نقطة البيع الذكية (POS)")
+  df_products = get_products()
 
-    if df_products.empty:
-        st.warning("⚠️ لا توجد منتجات بالمخزن. يرجى إضافة منتجات من شاشة المخزون أولاً.")
-    else:
-        col_scan, col_cart = st.columns([1.3, 1.1])
+  conn = sqlite3.connect(DB_NAME)
+  df_cust = pd.read_sql_query("SELECT name, phone FROM customers", conn)
+  conn.close()
 
-        with col_scan:
-            st.subheader("📦 كافة المنتجات المتاحة")
-            search_query = st.text_input("🔎 تصفية سريعة (اسم / باركود):", key="pos_search")
-            
-            filtered_df = df_products
-            if search_query:
-                filtered_df = df_products[
-                    df_products["name"].str.contains(search_query, case=False, na=False) |
-                    df_products["barcode"].str.contains(search_query, case=False, na=False)
-                ]
+  if df_products.empty:
+    st.warning("⚠️ لا توجد منتجات مسجلة بالمخزن حالياً.")
+  else:
+    col_scan, col_cart = st.columns([1.3, 1.1])
 
-            if not filtered_df.empty:
-                for idx, prod in filtered_df.iterrows():
-                    with st.container():
-                        p_col1, p_col2, p_col3, p_col4 = st.columns([2.5, 1.2, 1.2, 1])
-                        
-                        p_col1.write(f"**{prod['name']}**\n*(كود: {prod['barcode']})*")
-                        p_col2.write(f"السعر: **{prod['price']:.2f} د.أ**")
-                        p_col3.write(f"المخزون: `{prod['stock']}`")
-                        
-                        if p_col4.button("➕ إضافة", key=f"add_btn_{prod['id']}"):
-                            if prod['stock'] <= 0:
-                                st.error("المادة غير متوفرة بالمخزن!")
-                            else:
-                                existing_item = next((item for item in st.session_state["cart"] if item["id"] == prod['id']), None)
-                                if existing_item:
-                                    if existing_item['quantity'] + 1 > prod['stock']:
-                                        st.error("الكمية المطلوبة تتجاوز المخزون!")
-                                    else:
-                                        existing_item['quantity'] += 1
-                                        existing_item['subtotal'] = existing_item['quantity'] * existing_item['price']
-                                        existing_item['profit'] = (existing_item['price'] - existing_item['cost_price']) * existing_item['quantity']
-                                        st.rerun()
-                                else:
-                                    st.session_state["cart"].append({
-                                        "id": prod['id'],
-                                        "name": prod['name'],
-                                        "price": prod['price'],
-                                        "cost_price": prod['cost_price'],
-                                        "quantity": 1,
-                                        "subtotal": prod['price'],
-                                        "profit": prod['price'] - prod['cost_price']
-                                    })
-                                    st.rerun()
-                        st.markdown("<hr style='margin: 4px 0; border-color: #374151;'>", unsafe_allow_html=True)
-            else:
-                st.warning("لا توجد مواد تطابق البحث.")
+    with col_scan:
+      st.subheader("📦 المنتجات المتاحة")
+      scanner_input = st.text_input(
+          "🏷️ مسح الباركود السريع:", placeholder="أدخل أو امسح الباركود..."
+      )
 
-        with col_cart:
-            st.subheader("🛒 محتويات الفاتورة الحالية")
-            if not st.session_state["cart"]:
-                st.info("السلة فارغة. اضغط (➕ إضافة) بجانب أي منتج من القائمة.")
-            else:
-                for idx, item in enumerate(st.session_state["cart"]):
-                    c_name, c_qty, c_price, c_del = st.columns([2, 1.5, 1.2, 0.6])
-                    c_name.write(f"**{item['name']}**")
-                    
-                    prod_in_db = df_products[df_products["id"] == item["id"]].iloc[0]
-                    new_q = c_qty.number_input("الكمية", min_value=1, max_value=int(prod_in_db["stock"]), value=int(item["quantity"]), key=f"q_input_{idx}", label_visibility="collapsed")
-                    
-                    if new_q != item["quantity"]:
-                        item["quantity"] = new_q
-                        item["subtotal"] = new_q * item["price"]
-                        item["profit"] = (item["price"] - item["cost_price"]) * new_q
-                        st.rerun()
-
-                    c_price.write(f"**{item['subtotal']:.2f} د.أ**")
-                    
-                    if c_del.button("❌", key=f"del_{idx}"):
-                        st.session_state["cart"].pop(idx)
-                        st.rerun()
-
-                st.write("---")
-                subtotal_val = sum(item['subtotal'] for item in st.session_state["cart"])
-                
-                st.markdown("#### 🏷️ نظام الخصم المتعدد")
-                disc_type = st.radio("نوع الخصم:", ["مبلغ ثابت (د.أ)", "نسبة مئوية (%)"], horizontal=True)
-                
-                col_d1, col_d2 = st.columns(2)
-                if disc_type == "مبلغ ثابت (د.أ)":
-                    discount_val = col_d1.number_input("قيمة الخصم (د.أ):", min_value=0.0, max_value=float(subtotal_val), value=0.0, step=0.5)
-                else:
-                    disc_perc = col_d1.number_input("نسبة الخصم (%):", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-                    discount_val = (disc_perc / 100.0) * subtotal_val
-
-                grand_total = subtotal_val - discount_val
-                col_d2.markdown(f"### 💳 الصافي: `{grand_total:.2f} د.أ`")
-                
-                cust_name = st.text_input("اسم الزبون:", value="زبون عام")
-                pay_method = st.radio("طريقة الدفع:", ["نقداً (Cash)", "بطاقة (Card)", "ذمم / دين"], horizontal=True)
-
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("✅ إتمام عملية البيع", type="primary", use_container_width=True):
-                        conn = sqlite3.connect(DB_NAME)
-                        c = conn.cursor()
-                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        seller = st.session_state.get("logged_user", "admin")
-                        
-                        for item in st.session_state["cart"]:
-                            item_net_profit = item['profit'] - (discount_val / len(st.session_state["cart"]))
-                            c.execute("""
-                                INSERT INTO sales (date, customer_name, product_name, quantity, total_price, discount, net_profit, payment_method, seller_username)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (now_str, cust_name, item['name'], item['quantity'], item['subtotal'], discount_val, item_net_profit, pay_method, seller))
-                            
-                            c.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (item['quantity'], item['id']))
-                        
-                        if pay_method == "ذمم / دين":
-                            c.execute("INSERT INTO debts (customer_name, amount, date, notes, status) VALUES (?, ?, ?, ?, ?)", 
-                                      (cust_name, grand_total, now_str, f"فاتورة شراء من متجر الهاشمية بتاريخ {now_str}", "غير مدفوع"))
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        log_action(seller, "عملية بيع", f"فاتورة بقيمة {grand_total:.2f} د.أ - الزبون: {cust_name}")
-                        st.session_state["cart"] = []
-                        st.success("🎉 تم إتمام العملية بنجاح!")
-                        st.rerun()
-
-                with col_btn2:
-                    if st.button("🗑️ تفريغ السلة", use_container_width=True):
-                        st.session_state["cart"] = []
-                        st.rerun()
-
-# ----------------------------------------------------
-# 2. تنبيهات النقص وإعادة التزويد
-# ----------------------------------------------------
-elif menu == "🚨 تنبيهات النقص وإعادة التزويد":
-    st.header("🚨 مراقبة النقص وإعادة الشحن")
-    conn = sqlite3.connect(DB_NAME)
-    df_low = pd.read_sql_query("SELECT id, barcode, name, category, stock, min_stock FROM products WHERE stock <= min_stock", conn)
-    conn.close()
-
-    if df_low.empty:
-        st.balloons()
-        st.success("✅ جميع الأصناف والمواد متوفرة بأسعار ورصيد آمن بالمخزن!")
-    else:
-        st.error(f"⚠️ يوجد ({len(df_low)}) منتجات وصلت أو قلت عن حد الأمان!")
-        st.dataframe(df_low[["barcode", "name", "category", "stock", "min_stock"]], use_container_width=True, hide_index=True)
-        
-        st.divider()
-        st.subheader("⚡ تزويد سريع للمخزون")
-        col_r1, col_r2, col_r3 = st.columns(3)
-        with col_r1:
-            restock_prod_id = st.selectbox("اختر الصنف لتزويده:", df_low["id"].tolist(), format_func=lambda x: df_low[df_low["id"]==x]["name"].values[0])
-        with col_r2:
-            add_qty = st.number_input("الكمية المضافة:", min_value=1, value=10)
-        with col_r3:
-            st.write(" ")
-            st.write(" ")
-            if st.button("📥 تحديث المخزون فوراً", type="primary"):
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
-                c.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (add_qty, restock_prod_id))
-                conn.commit()
-                conn.close()
-                log_action(st.session_state["logged_user"], "إعادة شحن مخزون", f"إضافة كمية ({add_qty}) للمادة رقم #{restock_prod_id}")
-                st.success("تم تحديث الرصيد بنجاح!")
-                st.rerun()
-
-# ----------------------------------------------------
-# 3. سجل الذمم وتسديد الديون
-# ----------------------------------------------------
-elif menu == "📙 سجل الذمم وتسديد الديون":
-    st.header("📙 سجل متابعة وتسديد الديون والذمم")
-    conn = sqlite3.connect(DB_NAME)
-    df_debts = pd.read_sql_query("SELECT * FROM debts", conn)
-    conn.close()
-
-    if df_debts.empty:
-        st.info("💡 لا توجد ديون أو ذمم تسديد مسجلة حالياً.")
-    else:
-        st.dataframe(df_debts, use_container_width=True, hide_index=True)
-        
-        st.divider()
-        st.subheader("💵 تسديد دين زبون")
-        
-        unpaid_debts = df_debts[df_debts["status"] != "تم التسديد"]
-        if unpaid_debts.empty:
-            st.success("✅ جميع الذمم والديون مسددة بالكامل!")
-        else:
-            d_id = st.selectbox("اختر الدين المطلوب تسديده:", unpaid_debts["id"].tolist(), 
-                                format_func=lambda x: f"رقم #{x} - {unpaid_debts[unpaid_debts['id']==x]['customer_name'].values[0]} ({unpaid_debts[unpaid_debts['id']==x]['amount'].values[0]} د.أ)")
-            
-            curr_debt = unpaid_debts[unpaid_debts["id"] == d_id].iloc[0]
-            pay_amount = st.number_input("المبلغ المدفوع (د.أ):", min_value=0.1, max_value=float(curr_debt["amount"]), value=float(curr_debt["amount"]))
-            
-            if st.button("💳 تحصيل الدفعة والتسديد", type="primary"):
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
-                rem_amount = curr_debt["amount"] - pay_amount
-                
-                if rem_amount <= 0:
-                    c.execute("UPDATE debts SET amount = 0, status = 'تم التسديد' WHERE id = ?", (d_id,))
-                else:
-                    c.execute("UPDATE debts SET amount = ? WHERE id = ?", (rem_amount, d_id))
-                
-                conn.commit()
-                conn.close()
-                log_action(st.session_state["logged_user"], "تسديد دين", f"تسديد دفعة بقيمة {pay_amount} د.أ من دين #{d_id} للزبون {curr_debt['customer_name']}")
-                st.success("تم تسجيل التسديد بنجاح!")
-                st.rerun()
-
-# ----------------------------------------------------
-# 4. قسم إرجاع واستبدال الفواتير 🔄
-# ----------------------------------------------------
-elif menu == "🔄 إرجاع واستبدال الفواتير":
-    st.header("🔄 قسم استرجاع واستبدال الفواتير المطور")
-    
-    conn = sqlite3.connect(DB_NAME)
-    df_sales = pd.read_sql_query("SELECT * FROM sales ORDER BY id DESC", conn)
-    conn.close()
-
-    if df_sales.empty:
-        st.info("💡 لا توجد عمليات مبيعات مسجلة لإرجاعها.")
-    else:
-        st.subheader("🔎 البحث في الفواتير")
-        search_invoice = st.text_input("ادخل رقم الفاتورة / اسم الزبون / اسم المنتج:", placeholder="ابحث هنا...")
-        
-        filtered_sales = df_sales
-        if search_invoice:
-            filtered_sales = df_sales[
-                df_sales['id'].astype(str).str.contains(search_invoice, case=False, na=False) |
-                df_sales['customer_name'].str.contains(search_invoice, case=False, na=False) |
-                df_sales['product_name'].str.contains(search_invoice, case=False, na=False)
-            ]
-
-        st.dataframe(filtered_sales, use_container_width=True, hide_index=True)
-        st.divider()
-
-        st.subheader("🛠️ تنفيذ عملية الإرجاع")
-        
-        if filtered_sales.empty:
-            st.warning("لا توجد فواتير تطابق عملية البحث.")
-        else:
-            selected_sale_id = st.selectbox(
-                "اختر العملية المراد إرجاعها:", 
-                filtered_sales["id"].tolist(),
-                format_func=lambda x: f"فاتورة #{x} | الزبون: {df_sales[df_sales['id']==x]['customer_name'].values[0]} | المادة: {df_sales[df_sales['id']==x]['product_name'].values[0]} | الكمية المباعة: {df_sales[df_sales['id']==x]['quantity'].values[0]}"
+      if scanner_input:
+        matched_p = df_products[df_products["barcode"] == scanner_input]
+        if not matched_p.empty:
+          prod = matched_p.iloc[0]
+          if prod["stock"] > 0:
+            existing_item = next(
+                (
+                    item
+                    for item in st.session_state["cart"]
+                    if item["id"] == prod["id"]
+                ),
+                None,
             )
+            if existing_item:
+              existing_item["quantity"] += 1
+              existing_item["subtotal"] = (
+                  existing_item["quantity"] * existing_item["price"]
+              )
+              existing_item["profit"] = (
+                  existing_item["price"] - existing_item["cost_price"]
+              ) * existing_item["quantity"]
+            else:
+              st.session_state["cart"].append({
+                  "id": prod["id"],
+                  "name": prod["name"],
+                  "price": prod["price"],
+                  "cost_price": prod["cost_price"],
+                  "quantity": 1,
+                  "subtotal": prod["price"],
+                  "profit": prod["price"] - prod["cost_price"],
+              })
+            st.success(f"تم إضافة {prod['name']} للسلة بنجاح!")
+            st.rerun()
 
-            sale_row = df_sales[df_sales["id"] == selected_sale_id].iloc[0]
-            
-            with st.container():
-                st.markdown(f"""
-                <div class="gold-box">
-                    <strong>تفاصيل العملية المختارة:</strong><br>
-                    • رقم الفاتورة: #{sale_row['id']} | التاريخ: {sale_row['date']}<br>
-                    • الزبون: {sale_row['customer_name']} | طريقة الدفع: {sale_row['payment_method']}<br>
-                    • المنتج: {sale_row['product_name']} | السعر الإجمالي: {sale_row['total_price']:.2f} د.أ
-                </div>
-                """, unsafe_allow_html=True)
+      search_query = st.text_input("🔎 بحث عن منتج بالاسم:")
+      filtered_df = df_products
+      if search_query:
+        filtered_df = df_products[
+            df_products["name"].str.contains(search_query, case=False, na=False)
+        ]
 
-                col_rf1, col_rf2 = st.columns(2)
-                with col_rf1:
-                    return_qty = st.number_input("حدد الكمية المراد إرجاعها:", min_value=1, max_value=int(sale_row['quantity']), value=int(sale_row['quantity']))
-                
-                unit_price = sale_row['total_price'] / sale_row['quantity']
-                refund_amount = return_qty * unit_price
-                
-                with col_rf2:
-                    st.markdown(f"### 💵 المبلغ المسترجع: `{refund_amount:.2f} د.أ`")
-
-                if st.button("🔄 تأكيد عملية الإرجاع وصرف المستحقات", type="primary", use_container_width=True):
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    
-                    c.execute("UPDATE products SET stock = stock + ? WHERE name = ?", (return_qty, sale_row['product_name']))
-                    
-                    if return_qty == sale_row['quantity']:
-                        c.execute("DELETE FROM sales WHERE id = ?", (selected_sale_id,))
-                    else:
-                        new_qty = sale_row['quantity'] - return_qty
-                        new_total = new_qty * unit_price
-                        new_profit = sale_row['net_profit'] * (new_qty / sale_row['quantity'])
-                        c.execute("UPDATE sales SET quantity = ?, total_price = ?, net_profit = ? WHERE id = ?", 
-                                  (new_qty, new_total, new_profit, selected_sale_id))
-
-                    if sale_row['payment_method'] == "ذمم / دين":
-                        c.execute("SELECT id, amount FROM debts WHERE customer_name = ? AND status = 'غير مدفوع' ORDER BY id DESC LIMIT 1", (sale_row['customer_name'],))
-                        debt_record = c.fetchone()
-                        if debt_record:
-                            d_id, curr_amt = debt_record
-                            new_amt = max(0.0, curr_amt - refund_amount)
-                            if new_amt == 0:
-                                c.execute("UPDATE debts SET amount = 0, status = 'تم التسديد' WHERE id = ?", (d_id,))
-                            else:
-                                c.execute("UPDATE debts SET amount = ? WHERE id = ?", (new_amt, d_id))
-
-                    conn.commit()
-                    conn.close()
-
-                    log_action(st.session_state["logged_user"], "إرجاع فاتورة", f"إرجاع {return_qty} من {sale_row['product_name']} بقيمة {refund_amount:.2f} د.أ للزبون {sale_row['customer_name']}")
-
-                    st.success(f"🎉 تم إرجاع {return_qty} قطعة بنجاح وتحديث الرصيد بالمخزن!")
-
-                    receipt_html = f"""
-                    <div style="border:2px dashed #f59e0b; padding:15px; border-radius:10px; text-align:center; color:white; background-color:#111827; width:300px; margin:auto;">
-                        <h3 style="color:#f59e0b; margin:0;">👑 متجر الهاشمية</h3>
-                        <p style="margin:5px 0;"><strong>سند إرجاع مبيعات</strong></p>
-                        <hr style="border-color:#374151;">
-                        <p style="text-align:right; font-size:12px;">
-                        رقم الإرجاع: #{selected_sale_id}<br>
-                        التاريخ: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}<br>
-                        الزبون: {sale_row['customer_name']}<br>
-                        المادة: {sale_row['product_name']}<br>
-                        الكمية المرتجعة: {return_qty}<br>
-                        المبلغ المردود: {refund_amount:.2f} د.أ
-                        </p>
-                        <hr style="border-color:#374151;">
-                        <p style="font-size:11px; color:#9ca3af;">شكراً لتعاملكم مع متجر الهاشمية</p>
+      # عرض المنتجات في بطاقات مرتبة ومنسقة بشكل جميل
+      for idx, prod in filtered_df.iterrows():
+        st.markdown(
+            f"""
+            <div class="product-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <b style="font-size: 16px; color: #f59e0b;">{prod['name']}</b><br>
+                        <span style="color: #9ca3af; font-size: 12px;">الباركود: {prod['barcode']} | المخزن: <b style="color: #38bdf8;">{prod['stock']}</b></span>
                     </div>
-                    """
-                    st.markdown(receipt_html, unsafe_allow_html=True)
-                    st.download_button("🖨️ طباعة سند الإرجاع (HTML)", data=f"<html><body onload='window.print();'>{receipt_html}</body></html>", file_name=f"Return_{selected_sale_id}.html", mime="text/html")
-
-# ----------------------------------------------------
-# 5. إدارة وتعديل المخزون
-# ----------------------------------------------------
-elif menu == "📦 إدارة وتعديل المخزون":
-    st.header("📦 إدارة المنتجات وتحديث المخزون")
-    
-    tab1, tab2 = st.tabs(["➕ إضافة صنف جديد", "🛠️ تعديل أو حذف صنف"])
-    
-    with tab1:
-        with st.form("add_prod_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                p_code = st.text_input("رمز الباركود:")
-                p_name = st.text_input("اسم المنتج:")
-            with c2:
-                p_cat = st.text_input("التصنيف:", value="عام")
-                p_price = st.number_input("سعر البيع (د.أ):", min_value=0.01, step=0.1)
-            with c3:
-                p_cost = st.number_input("سعر التكلفة (د.أ):", min_value=0.0, step=0.1)
-                p_stock = st.number_input("الكمية المتاحة:", min_value=1, value=10)
-
-            if st.form_submit_button("💾 حفظ الصنف", type="primary"):
-                if p_code and p_name:
-                    try:
-                        conn = sqlite3.connect(DB_NAME)
-                        c = conn.cursor()
-                        c.execute("INSERT INTO products (barcode, name, category, price, cost_price, stock) VALUES (?, ?, ?, ?, ?, ?)",
-                                  (p_code, p_name, p_cat, p_price, p_cost, p_stock))
-                        conn.commit()
-                        conn.close()
-                        log_action(st.session_state["logged_user"], "إضافة صنف", f"إضافة {p_name} (باركود: {p_code})")
-                        st.success("تم إضافة الصنف للمخزن بنجاح!")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("الباركود مستخدم لمنتج آخر!")
-
-    with tab2:
-        df_prods = get_products()
-        if not df_prods.empty:
-            edit_p_id = st.selectbox("اختر الصنف للتعديل عليه:", df_prods["id"].tolist(),
-                                     format_func=lambda x: f"{df_prods[df_prods['id']==x]['name'].values[0]} - [{df_prods[df_prods['id']==x]['barcode'].values[0]}]")
-            
-            p_selected = df_prods[df_prods["id"] == edit_p_id].iloc[0]
-            
-            with st.form("edit_prod_form"):
-                ec1, ec2 = st.columns(2)
-                with ec1:
-                    e_name = st.text_input("اسم المنتج:", value=p_selected["name"])
-                    e_price = st.number_input("سعر البيع:", value=float(p_selected["price"]))
-                    e_stock = st.number_input("الكمية بالمخزن:", value=int(p_selected["stock"]))
-                with ec2:
-                    e_cat = st.text_input("التصنيف:", value=p_selected["category"])
-                    e_cost = st.number_input("سعر التكلفة:", value=float(p_selected["cost_price"]))
-                    e_min = st.number_input("حد النقص الأدنى:", value=int(p_selected["min_stock"]))
-
-                col_u1, col_u2 = st.columns(2)
-                with col_u1:
-                    if st.form_submit_button("💾 تحديث البيانات", type="primary"):
-                        conn = sqlite3.connect(DB_NAME)
-                        c = conn.cursor()
-                        c.execute("""
-                            UPDATE products SET name=?, category=?, price=?, cost_price=?, stock=?, min_stock=?
-                            WHERE id=?
-                        """, (e_name, e_cat, e_price, e_cost, e_stock, e_min, edit_p_id))
-                        conn.commit()
-                        conn.close()
-                        log_action(st.session_state["logged_user"], "تعديل صنف", f"تعديل المنتج #{edit_p_id} ({e_name})")
-                        st.success("تم التعديل بنجاح!")
-                        st.rerun()
-
-            if st.button(f"🗑️ حذف ({p_selected['name']}) نهائياً", type="secondary"):
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
-                c.execute("DELETE FROM products WHERE id = ?", (edit_p_id,))
-                conn.commit()
-                conn.close()
-                log_action(st.session_state["logged_user"], "حذف صنف", f"حذف الصنف #{edit_p_id}")
-                st.success("تم الحذف بنجاح!")
-                st.rerun()
-
-    st.subheader("📋 كشف المواد المسجلة")
-    st.dataframe(get_products(), use_container_width=True, hide_index=True)
-
-# ----------------------------------------------------
-# 6. طباعة بطاقات الأسعار المصممة
-# ----------------------------------------------------
-elif menu == "🏷️ طباعة بطاقات الأسعار":
-    st.header("🏷️ تصميم وطباعة بطاقات الأسعار لمتجر الهاشمية")
-    df_products = get_products()
-    
-    if df_products.empty:
-        st.info("💡 لا توجد منتجات لتصميم بطاقات أسعار لها.")
-    else:
-        col_opt1, col_opt2, col_opt3 = st.columns(3)
-        with col_opt1:
-            selected_tag_prod = st.selectbox("🎯 اختر المنتج:", df_products["name"].tolist())
-            prod_data = df_products[df_products["name"] == selected_tag_prod].iloc[0]
-        with col_opt2:
-            tag_style = st.selectbox("🎨 النمط والقالب:", [
-                "🥇 قالب الهاشمية الذهبي الفاخر",
-                "💥 قالب العروض والتخفيضات",
-                "🌿 القالب العصري البسيط"
-            ])
-        with col_opt3:
-            tag_size = st.radio("📐 الحجم:", ["صغير للرفوف", "كبير للملصقات"], horizontal=True)
-
-        card_width = "380px" if "كبير" in tag_size else "280px"
-        font_size_price = "42px" if "كبير" in tag_size else "32px"
-
-        p_name = prod_data['name']
-        p_cat = prod_data['category']
-        p_price = f"{prod_data['price']:.2f}"
-        p_code = prod_data['barcode']
-        p_id = prod_data['id']
-
-        if "الذهبي" in tag_style:
-            tag_html = f"""
-            <div style="border: 2px solid #d97706; background: #111827; padding: 16px; border-radius: 14px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: white;">
-                <div style="border-bottom: 1px solid #374151; padding-bottom: 6px; margin-bottom: 10px;">
-                    <span style="color: #f59e0b; font-weight: bold; font-size: 15px;">👑 متجر الهاشمية</span>
-                </div>
-                <h3 style="color: #ffffff; margin: 6px 0; font-size: 20px;">{p_name}</h3>
-                <p style="color: #9ca3af; font-size: 12px; margin: 0 0 10px 0;">التصنيف: {p_cat}</p>
-                <div style="background: rgba(245, 158, 11, 0.15); border: 1px dashed #f59e0b; padding: 8px; border-radius: 10px; margin: 10px 0;">
-                    <span style="color: #10b981; font-size: {font_size_price}; font-weight: bold;">{p_price}</span>
-                    <span style="color: #10b981; font-size: 16px; font-weight: bold;"> د.أ</span>
-                </div>
-                <div style="font-size: 11px; color: #9ca3af; margin-top: 8px;">
-                    رمز الباركود: {p_code}
+                    <div style="text-align: left;">
+                        <span style="font-size: 16px; font-weight: bold; color: #34d399;">{prod['price'] * exchange_rate:.2f} د.أ</span>
+                    </div>
                 </div>
             </div>
-            """
-        elif "العروض" in tag_style:
-            tag_html = f"""
-            <div style="border: 3px solid #ef4444; background: #ffffff; padding: 16px; border-radius: 14px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: #111827;">
-                <div style="background-color: #ef4444; color: white; font-weight: bold; font-size: 13px; padding: 4px 0; border-radius: 6px; margin-bottom: 8px;">
-                    🔥 عرض خاص - الهاشمية 🔥
-                </div>
-                <h3 style="color: #111827; margin: 6px 0; font-size: 20px;">{p_name}</h3>
-                <div style="background-color: #fef2f2; border: 2px solid #fca5a5; padding: 8px; border-radius: 10px; margin: 8px 0;">
-                    <span style="color: #dc2626; font-size: {font_size_price}; font-weight: bold;">{p_price}</span>
-                    <span style="color: #dc2626; font-size: 16px; font-weight: bold;"> د.أ</span>
-                </div>
-                <div style="font-size: 11px; color: #9ca3af; margin-top: 6px;">
-                    كود: {p_code}
-                </div>
-            </div>
-            """
-        else:
-            tag_html = f"""
-            <div style="border: 1px solid #d1d5db; background: #f9fafb; padding: 16px; border-radius: 12px; width: {card_width}; text-align: center; margin: auto; font-family: sans-serif; color: #111827;">
-                <h4 style="color: #4b5563; margin: 0 0 4px 0; font-size: 13px;">👑 متجر الهاشمية</h4>
-                <h3 style="color: #1f2937; margin: 6px 0; font-size: 19px;">{p_name}</h3>
-                <h2 style="color: #059669; font-size: {font_size_price}; margin: 8px 0; font-weight: bold;">
-                    {p_price} <span style="font-size:15px;">د.أ</span>
-                </h2>
-                <div style="font-size: 11px; color: #6b7280;">
-                    الباركود: {p_code}
-                </div>
-            </div>
-            """
-
-        st.markdown(tag_html, unsafe_allow_html=True)
-        
-        print_code = f"<html><body onload='window.print(); window.close();'>{tag_html}</body></html>"
-        st.download_button(
-            label="🖨️ طباعة بطاقة السعر (HTML)",
-            data=print_code,
-            file_name=f"PriceTag_{p_id}.html",
-            mime="text/html",
-            type="primary",
-            use_container_width=True
+            """,
+            unsafe_allow_html=True,
         )
 
-# ----------------------------------------------------
-# 7. التقارير المالية والأرباح المحدثة 📊
-# ----------------------------------------------------
-elif menu == "📊 التقارير المالية والأرباح":
-    st.header("📊 لوحة المبيعات والتحليلات المالية المتقدمة")
-    
-    conn = sqlite3.connect(DB_NAME)
-    df_sales = pd.read_sql_query("SELECT * FROM sales", conn)
-    conn.close()
+        # زر الإضافة منفصل بدقة لضمان عدم حدوث تداخل
+        if st.button("➕ إضافة للسلة", key=f"add_btn_{prod['id']}"):
+          if prod["stock"] > 0:
+            existing_item = next(
+                (
+                    item
+                    for item in st.session_state["cart"]
+                    if item["id"] == prod["id"]
+                ),
+                None,
+            )
+            if existing_item:
+              existing_item["quantity"] += 1
+              existing_item["subtotal"] = (
+                  existing_item["quantity"] * existing_item["price"]
+              )
+              existing_item["profit"] = (
+                  existing_item["price"] - existing_item["cost_price"]
+              ) * existing_item["quantity"]
+            else:
+              st.session_state["cart"].append({
+                  "id": prod["id"],
+                  "name": prod["name"],
+                  "price": prod["price"],
+                  "cost_price": prod["cost_price"],
+                  "quantity": 1,
+                  "subtotal": prod["price"],
+                  "profit": prod["price"] - prod["cost_price"],
+              })
+            st.rerun()
+          else:
+            st.error("نفذت الكمية من المخزن!")
+        st.write("")
 
-    if df_sales.empty:
-        st.info("لا توجد مبيعات مسجلة للتقرير حالياً.")
-    else:
-        # التأكد من أن الأعمدة الرقمية بصيغة أرقام صحيحة أو عشرية لتجنب أخطاء التجميع
-        df_sales["total_price"] = pd.to_numeric(df_sales["total_price"], errors="coerce").fillna(0.0)
-        df_sales["discount"] = pd.to_numeric(df_sales["discount"], errors="coerce").fillna(0.0)
-        df_sales["net_profit"] = pd.to_numeric(df_sales["net_profit"], errors="coerce").fillna(0.0)
-        df_sales["quantity"] = pd.to_numeric(df_sales["quantity"], errors="coerce").fillna(0)
+    with col_cart:
+      st.subheader("🛒 سلة المشتريات الحالية")
+      if not st.session_state["cart"]:
+        st.info("السلة فارغة.")
+      else:
+        for idx, item in enumerate(st.session_state["cart"]):
+          c1, c2, c3, c4 = st.columns([2, 1.5, 1.2, 0.6])
+          c1.write(f"**{item['name']}**")
+          new_q = c2.number_input(
+              "الكمية",
+              min_value=1,
+              value=int(item["quantity"]),
+              key=f"q_{idx}",
+              label_visibility="collapsed",
+          )
+          if new_q != item["quantity"]:
+            item["quantity"] = new_q
+            item["subtotal"] = new_q * item["price"]
+            item["profit"] = (item["price"] - item["cost_price"]) * new_q
+            st.rerun()
+          c3.write(f"**{item['subtotal'] * exchange_rate:.2f}**")
+          if c4.button("❌", key=f"del_{idx}"):
+            st.session_state["cart"].pop(idx)
+            st.rerun()
 
-        # تحويل عمود التاريخ لتسهيل الفلترة
-        df_sales["date_only"] = pd.to_datetime(df_sales["date"]).dt.date
+        st.write("---")
+        subtotal_val = sum(item["subtotal"] for item in st.session_state["cart"])
 
-        # شريط خيارات الفلترة المتقدمة
-        st.markdown("#### 📅 فلترة التقارير حسب النطاق الزمني")
-        filter_option = st.selectbox("اختر الفترة:", ["الكل", "اليوم الحالي", "آخر 7 أيام", "آخر 30 يوماً", "تاريخ مخصص"])
+        cust_name = st.selectbox(
+            "👤 اسم الزبون:", df_cust["name"].tolist()
+        )
+        pay_type = st.radio(
+            "طريقة الدفع:", ["نقدي (Cash)", "آجل (تسجيل ذمم)"], horizontal=True
+        )
 
-        today_date = datetime.date.today()
-        filtered_df = df_sales
+        disc_val = st.number_input(
+            "قيمة الخصم:", min_value=0.0, max_value=float(subtotal_val), value=0.0
+        )
+        grand_total = subtotal_val - disc_val
 
-        if filter_option == "اليوم الحالي":
-            filtered_df = df_sales[df_sales["date_only"] == today_date]
-        elif filter_option == "آخر 7 أيام":
-            start_date = today_date - datetime.timedelta(days=7)
-            filtered_df = df_sales[df_sales["date_only"] >= start_date]
-        elif filter_option == "آخر 30 يوماً":
-            start_date = today_date - datetime.timedelta(days=30)
-            filtered_df = df_sales[df_sales["date_only"] >= start_date]
-        elif filter_option == "تاريخ مخصص":
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                from_d = st.date_input("من تاريخ:", value=today_date - datetime.timedelta(days=7))
-            with col_d2:
-                to_d = st.date_input("إلى تاريخ:", value=today_date)
-            filtered_df = df_sales[(df_sales["date_only"] >= from_d) & (df_sales["date_only"] <= to_d)]
+        st.markdown(
+            f"### 💳 الصافي المطلوب: `{grand_total * exchange_rate:.2f}`"
+        )
 
-        if filtered_df.empty:
-            st.warning("⚠️ لا توجد مبيعات مسجلة ضمن النطاق الزمني المحدد.")
-        else:
-            # مؤشرات الأداء الرئيسية (KPIs)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("إجمالي المبيعات", f"{filtered_df['total_price'].sum():.2f} د.أ")
-            m2.metric("إجمالي الخصومات", f"{filtered_df['discount'].sum():.2f} د.أ")
-            m3.metric("صافي الأرباح", f"{filtered_df['net_profit'].sum():.2f} د.أ")
-            m4.metric("عدد الفواتير/العمليات", len(filtered_df))
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+          checkout_btn = st.button(
+              "✅ إتمام البيع وتوليد PDF",
+              type="primary",
+              use_container_width=True,
+          )
+        with col_b2:
+          selected_cust_row = df_cust[df_cust["name"] == cust_name]
+          phone_num = (
+              selected_cust_row["phone"].values[0]
+              if not selected_cust_row.empty
+              else "962700000000"
+          )
+          wa_text = f"مرحباً {cust_name}، شكراً لتسوقك معنا. إجمالي فاتورتك: {grand_total:.2f} دينار."
+          whatsapp_url = f"https://wa.me/{phone_num}?text={urllib.parse.quote(wa_text)}"
+          st.markdown(
+              f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25d366; color: white; border: none; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer;">💬 إرسال واتساب</button></a>',
+              unsafe_allow_html=True,
+          )
 
-            st.divider()
+        if checkout_btn:
+          conn = sqlite3.connect(DB_NAME)
+          c = conn.cursor()
+          now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+          seller = st.session_state.get("logged_user", "admin")
 
-            # تحليلات تفصيلية
-            col_ch1, col_ch2 = st.columns(2)
-            
-            with col_ch1:
-                st.subheader("💳 المبيعات حسب طريقة الدفع")
-                payment_summary = filtered_df.groupby("payment_method")["total_price"].sum().reset_index()
-                payment_summary.columns = ["طريقة الدفع", "إجمالي المبلغ (د.أ)"]
-                st.dataframe(payment_summary, use_container_width=True, hide_index=True)
-
-            with col_ch2:
-                st.subheader("🏆 أفضل المنتجات مبيعاً")
-                top_products = filtered_df.groupby("product_name").agg(
-                    quantity=("quantity", "sum"),
-                    total_price=("total_price", "sum")
-                ).reset_index()
-                top_products.columns = ["اسم المنتج", "الكمية المباعة", "إجمالي المبيعات (د.أ)"]
-                top_products = top_products.sort_values(by="الكمية المباعة", ascending=False)
-                st.dataframe(top_products, use_container_width=True, hide_index=True)
-
-            st.divider()
-            st.subheader("📈 رسم بياني لحركة المبيعات اليومية")
-            daily_chart_data = filtered_df.groupby("date_only")["total_price"].sum().reset_index()
-            daily_chart_data.columns = ["التاريخ", "المبيعات"]
-            daily_chart_data = daily_chart_data.set_index("التاريخ")
-            st.line_chart(daily_chart_data)
-
-            st.divider()
-            st.subheader("📋 سجل العمليات التفصيلي للفترة")
-            st.dataframe(filtered_df.drop(columns=["date_only"]), use_container_width=True, hide_index=True)
-
-            csv_data = filtered_df.drop(columns=["date_only"]).to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                "📥 تصدير التقرير المالي المصفى إلى CSV/Excel",
-                data=csv_data,
-                file_name=f"Report_AlHashemiah_{datetime.date.today()}.csv",
-                mime="text/csv",
-                type="primary",
-                use_container_width=True
+          for item in st.session_state["cart"]:
+            item_profit = item["profit"] - (
+                disc_val / len(st.session_state["cart"])
+            )
+            c.execute(
+                """
+                            INSERT INTO sales (date, customer_name, product_name, quantity, total_price, discount, net_profit, seller_username, payment_type)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                (
+                    now_str,
+                    cust_name,
+                    item["name"],
+                    item["quantity"],
+                    item["subtotal"],
+                    disc_val,
+                    item_profit,
+                    seller,
+                    pay_type,
+                ),
+            )
+            c.execute(
+                "UPDATE products SET stock = stock - ? WHERE id = ?",
+                (item["quantity"], item["id"]),
             )
 
-# ----------------------------------------------------
-# 8. سجل الأحداث والرقابة (Audit Log)
-# ----------------------------------------------------
-elif menu == "📜 سجل الأحداث والرقابة (Audit Log)":
-    st.header("📜 سجل الرقابة والمتابعة الأمنية (Audit Log)")
-    conn = sqlite3.connect(DB_NAME)
-    df_logs = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY id DESC", conn)
-    conn.close()
-
-    if df_logs.empty:
-        st.info("سجل الرقابة فارغ.")
-    else:
-        st.dataframe(df_logs, use_container_width=True, hide_index=True)
-
-# ----------------------------------------------------
-# 9. النسخ الاحتياطي للنظام
-# ----------------------------------------------------
-elif menu == "⚙️ النسخ الاحتياطي للنظام":
-    st.header("⚙️ النسخ الاحتياطي لقاعدة البيانات")
-    try:
-        with open(DB_NAME, "rb") as db_file:
-            st.download_button(
-                "💾 تنزيل نسخة احتياطية من القاعدة (al_hashemiah_pos.db)",
-                data=db_file,
-                file_name=f"AlHashemiah_backup_{datetime.date.today()}.db",
-                mime="application/x-sqlite3",
-                type="primary",
-                use_container_width=True
+          if "آجل" in pay_type:
+            c.execute(
+                "UPDATE customers SET debt = debt + ?, total_spent ="
+                " total_spent + ? WHERE name = ?",
+                (grand_total, grand_total, cust_name),
             )
-    except Exception as e:
-        st.error(f"خطأ: {e}")
+          else:
+            c.execute(
+                "UPDATE customers SET total_spent = total_spent + ?, points ="
+                " points + ? WHERE name = ?",
+                (grand_total, int(grand_total), cust_name),
+            )
+
+          conn.commit()
+          c.execute("SELECT last_insert_rowid()")
+          last_inv_id = c.fetchone()[0]
+          conn.close()
+
+          log_action(
+              seller,
+              "عملية بيع",
+              f"فاتورة #{last_inv_id} بقيمة {grand_total:.2f} ({pay_type})",
+          )
+
+          pdf_bytes = generate_pdf_invoice(
+              last_inv_id,
+              cust_name,
+              st.session_state["cart"],
+              subtotal_val,
+              disc_val,
+              grand_total,
+          )
+
+          st.success("🎉 تمت عملية البيع بنجاح وتحديث النظام!")
+          st.download_button(
+              label="📥 تحميل الفاتورة الرسمية (PDF)",
+              data=pdf_bytes,
+              file_name=f"Invoice_{last_inv_id}.pdf",
+              mime="application/pdf",
+              type="primary",
+          )
+          st.session_state["cart"] = []
 
 # ----------------------------------------------------
-# 10. إدارة الحسابات والصلاحيات
+# 2. لوحة المؤشرات الذكية
 # ----------------------------------------------------
-elif menu == "👥 إدارة الحسابات والصلاحيات":
-    st.header("👥 مركز التحكم والمستخدمين والصلاحيات")
-    
-    curr_user = st.session_state.get("logged_user", "admin")
-    curr_role = st.session_state.get("user_role", "Admin")
+elif menu == "📊 لوحة المؤشرات الذكية":
+  st.header("📊 لوحة مؤشرات الأداء والتحليلات")
 
-    tab_my, tab_new, tab_all = st.tabs(["🔐 حسابي الشخصي", "➕ إضافة مستخدم جديد", "🛠️ إدارة الحسابات"])
+  conn = sqlite3.connect(DB_NAME)
+  df_sales = pd.read_sql_query("SELECT * FROM sales", conn)
+  df_exp = pd.read_sql_query("SELECT * FROM expenses", conn)
+  conn.close()
 
-    with tab_my:
-        st.subheader("🔑 تعديل الحساب الحالي")
-        with st.form("my_acc_form"):
-            new_u = st.text_input("اسم المستخدم الحالي:", value=curr_user)
-            new_p = st.text_input("كلمة السر الجديدة:", type="password")
-            confirm_p = st.text_input("تأكيد كلمة السر:", type="password")
-            
-            if st.form_submit_button("💾 حفظ البيانات", type="primary"):
-                if new_p and new_p != confirm_p:
-                    st.error("كلمتا السر غير متطابقتين!")
-                else:
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    if new_p:
-                        c.execute("UPDATE users SET username=?, password=? WHERE username=?", (new_u, new_p, curr_user))
-                    else:
-                        c.execute("UPDATE users SET username=? WHERE username=?", (new_u, curr_user))
-                    conn.commit()
-                    conn.close()
-                    st.session_state["logged_user"] = new_u
-                    st.success("تم التحديث بنجاح!")
-                    st.rerun()
+  if df_sales.empty:
+    st.info("💡 لا توجد مبيعات كافية لعرض الرسوم البيانية.")
+  else:
+    df_sales["date"] = pd.to_datetime(df_sales["date"])
+    df_sales["hour"] = df_sales["date"].dt.hour
+    df_sales["day_name"] = df_sales["date"].dt.day_name()
 
-    with tab_new:
-        if curr_role != "Admin":
-            st.warning("هذه الصلاحية مقتصرة على المسؤول (Admin).")
-        else:
-            with st.form("add_u_form", clear_on_submit=True):
-                au = st.text_input("اسم المستخدم الجديد:")
-                ap = st.text_input("كلمة السر:", type="password")
-                ar = st.selectbox("مستوى الصلاحية:", ["Cashier", "Inventory", "Admin"])
-                
-                if st.form_submit_button("➕ إنشاء الحساب", type="primary"):
-                    if au and ap:
-                        try:
-                            conn = sqlite3.connect(DB_NAME)
-                            c = conn.cursor()
-                            c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (au, ap, ar))
-                            conn.commit()
-                            conn.close()
-                            log_action(curr_user, "إضافة مستخدم", f"إضافة حساب {au} بصلاحية [{ar}]")
-                            st.success("تم إنشاء حساب الموظف بنجاح!")
-                        except sqlite3.IntegrityError:
-                            st.error("اسم المستخدم مسجل مسبقاً!")
+    tot_rev = df_sales["total_price"].sum()
+    tot_prof = df_sales["net_profit"].sum()
+    tot_exp = df_exp["amount"].sum() if not df_exp.empty else 0.0
+    net_net = tot_prof - tot_exp
 
-    with tab_all:
-        if curr_role != "Admin":
-            st.warning("هذه الصلاحية مقتصرة على المسؤول (Admin).")
-        else:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("إجمالي المبيعات", f"{tot_rev:.2f} د.أ")
+    m2.metric("إجمالي أرباح المنتجات", f"{tot_prof:.2f} د.أ")
+    m3.metric("إجمالي المصروفات", f"{tot_exp:.2f} د.أ")
+    m4.metric("صافي الربح النهائي", f"{net_net:.2f} د.أ")
+
+    st.divider()
+
+    c1, c2 = st.columns(2)
+    with c1:
+      st.subheader("⏰ المبيعات حسب ساعات اليوم")
+      h_df = df_sales.groupby("hour")["total_price"].sum().reset_index()
+      fig1 = px.bar(
+          h_df,
+          x="hour",
+          y="total_price",
+          labels={"hour": "الساعة", "total_price": "المبيعات"},
+          color_discrete_sequence=["#d97706"],
+      )
+      st.plotly_chart(fig1, use_container_width=True)
+
+    with c2:
+      st.subheader("📅 المبيعات حسب أيام الأسبوع")
+      d_df = df_sales.groupby("day_name")["total_price"].sum().reset_index()
+      fig2 = px.pie(
+          d_df,
+          names="day_name",
+          values="total_price",
+          hole=0.4,
+          color_discrete_sequence=px.colors.sequential.Sunset,
+      )
+      st.plotly_chart(fig2, use_container_width=True)
+
+# ----------------------------------------------------
+# 3. التنبؤ الذكي بالمبيعات (AI)
+# ----------------------------------------------------
+elif menu == "🤖 التنبؤ الذكي بالمبيعات (AI)":
+  st.header("🤖 التنبؤ بحجم المبيعات المستقبلي (ميزة ذكاء اصطناعي)")
+  conn = sqlite3.connect(DB_NAME)
+  df_s = pd.read_sql_query("SELECT date, total_price FROM sales", conn)
+  conn.close()
+
+  if len(df_s) < 3:
+    st.warning("⚠️ يلزم تسجيل 3 عمليات مبيعات على الأقل لتفعيل نموذج التنبؤ.")
+  else:
+    df_s["date"] = pd.to_datetime(df_s["date"])
+    daily_sales = (
+        df_s.groupby(df_s["date"].dt.date)["total_price"].sum().reset_index()
+    )
+    daily_sales["day_index"] = np.arange(len(daily_sales))
+
+    X = daily_sales[["day_index"]]
+    y = daily_sales["total_price"]
+
+    from sklearn.linear_model import LinearRegression
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    next_day_idx = np.array([[len(daily_sales)]])
+    predicted_sales = model.predict(next_day_idx)[0]
+
+    st.success(
+        f"📈 بناءً على خوارزميات التعلم الآلي والبيانات السابقة، المبيعات المتوقعة"
+        f" لليوم القادم تقريباً: **{max(0, predicted_sales):.2f} دينار**"
+    )
+
+    fig_ai = px.scatter(
+        daily_sales,
+        x="date",
+        y="total_price",
+        trendline="ols",
+        labels={"date": "التاريخ", "total_price": "المبيعات اليومية"},
+        title="تحليل واتجاه نمو المبيعات التاريخي",
+    )
+    st.plotly_chart(fig_ai, use_container_width=True)
+
+# ----------------------------------------------------
+# 4. إدارة الديون والذمم المالية
+# ----------------------------------------------------
+elif menu == "📖 إدارة الديون والذمم المالية":
+  st.header("📖 سجل الديون والذمم المستحقة على العملاء")
+  conn = sqlite3.connect(DB_NAME)
+  df_debts = pd.read_sql_query(
+      "SELECT id, name, phone, debt FROM customers WHERE debt > 0", conn
+  )
+  conn.close()
+
+  if df_debts.empty:
+    st.success("✅ لا توجد أي ديون مستحقة على العملاء حالياً!")
+  else:
+    st.dataframe(df_debts, use_container_width=True, hide_index=True)
+    st.subheader("💳 سداد دفعة من الدين")
+
+    with st.form("pay_debt_form"):
+      c_sel = st.selectbox("اختر العميل:", df_debts["name"].tolist())
+      p_amt = st.number_input("المبلغ المسدد (د.أ):", min_value=0.1)
+      if st.form_submit_button("💰 تأكيد سداد الدين", type="primary"):
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "UPDATE customers SET debt = debt - ? WHERE name = ?",
+            (p_amt, c_sel),
+        )
+        conn.commit()
+        conn.close()
+        st.success("تم تحديث حساب العميل وتسجيل السداد بنجاح!")
+        st.rerun()
+
+# ----------------------------------------------------
+# 5. تنبيهات نقص المخزون
+# ----------------------------------------------------
+elif menu == "🚨 تنبيهات نقص المخزون":
+  st.header("🚨 مراقبة النقص وإعادة التزويد")
+  conn = sqlite3.connect(DB_NAME)
+  df_low = pd.read_sql_query(
+      "SELECT id, barcode, name, category, stock, min_stock FROM products"
+      " WHERE stock <= min_stock",
+      conn,
+  )
+  conn.close()
+
+  if df_low.empty:
+    st.success("✅ جميع الأصناف متوفرة بأرصدة آمنة تماماً!")
+  else:
+    st.error(f"⚠️ يوجد ({len(df_low)}) منتجات وصلت للحد الأدنى أو أقل!")
+    st.dataframe(df_low, use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------
+# 6. إدارة العملاء وبرنامج الولاء (CRM)
+# ----------------------------------------------------
+elif menu == "👥 إدارة العملاء وبرنامج الولاء (CRM)":
+  st.header("👥 مركز إدارة العملاء ونقاط الولاء")
+  t1, t2 = st.tabs(["➕ إضافة عميل", "📋 قائمة العملاء"])
+
+  with t1:
+    with st.form("cust_f", clear_on_submit=True):
+      cn = st.text_input("اسم العميل:")
+      cp = st.text_input("رقم الهاتف (مثال: 9627xxxxxxxx):")
+      ct = st.selectbox("التصنيف:", ["عادي", "برونزي", "فضي", "ذهبي (VIP)"])
+      if st.form_submit_button("💾 حفظ العميل", type="primary"):
+        if cn:
+          try:
             conn = sqlite3.connect(DB_NAME)
-            df_users = pd.read_sql_query("SELECT id, username, role FROM users", conn)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO customers (name, phone, tier) VALUES (?, ?, ?)",
+                (cn, cp, ct),
+            )
+            conn.commit()
             conn.close()
-            st.dataframe(df_users, use_container_width=True, hide_index=True)
+            st.success("تم إضافة العميل بنجاح!")
+            st.rerun()
+          except sqlite3.IntegrityError:
+            st.error("اسم العميل موجود مسبقاً!")
+
+  with t2:
+    conn = sqlite3.connect(DB_NAME)
+    st.dataframe(
+        pd.read_sql_query("SELECT * FROM customers", conn),
+        use_container_width=True,
+        hide_index=True,
+    )
+    conn.close()
+
+# ----------------------------------------------------
+# 7. إدارة المنتجات وتوليد الباركود
+# ----------------------------------------------------
+elif menu == "📦 إدارة المنتجات وتوليد الباركود":
+  st.header("📦 إدارة المخزون وتوليد الباركود الحقيقي")
+  t1, t2 = st.tabs(["➕ إضافة منتج جديد", "🏷️ عرض وطباعة الباركود"])
+
+  with t1:
+    with st.form("prod_f", clear_on_submit=True):
+      c1, c2, c3 = st.columns(3)
+      with c1:
+        p_code = st.text_input("رمز الباركود (رقمي/إنجليزي):")
+        p_name = st.text_input("اسم المنتج:")
+      with c2:
+        p_cat = st.text_input("التصنيف:", value="عام")
+        p_price = st.number_input("سعر البيع (د.أ):", min_value=0.01)
+      with c3:
+        p_cost = st.number_input("سعر التكلفة (د.أ):", min_value=0.0)
+        p_stock = st.number_input("الكمية الأولية:", min_value=1, value=10)
+
+      if st.form_submit_button("💾 حفظ المنتج وتوليد الباركود", type="primary"):
+        if p_code and p_name:
+          try:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO products (barcode, name, category, price,"
+                " cost_price, stock) VALUES (?, ?, ?, ?, ?, ?)",
+                (p_code, p_name, p_cat, p_price, p_cost, p_stock),
+            )
+            conn.commit()
+            conn.close()
+            st.success("تم حفظ المنتج بنجاح!")
+            st.rerun()
+          except sqlite3.IntegrityError:
+            st.error("الباركود مستخدم مسبقاً لصنف آخر!")
+
+  with t2:
+    df_prods = get_products()
+    if not df_prods.empty:
+      sel_p = st.selectbox(
+          "اختر المنتج لعرض الباركود الحقيقي:", df_prods["name"].tolist()
+      )
+      p_row = df_prods[df_prods["name"] == sel_p].iloc[0]
+      st.write(
+          f"**المنتج:** {p_row['name']} | **الباركود:** `{p_row['barcode']}`"
+      )
+      try:
+        b_img = create_barcode_image(str(p_row["barcode"]))
+        st.image(b_img, caption=f"Barcode: {p_row['barcode']}")
+        st.download_button(
+            "📥 تحميل صورة الباركود",
+            data=b_img,
+            file_name=f"Barcode_{p_row['barcode']}.png",
+            mime="image/png",
+        )
+      except Exception as e:
+        st.error(f"خطأ في توليد الباركود: {e}")
+
+# ----------------------------------------------------
+# 8. المصروفات والنثريات المالية
+# ----------------------------------------------------
+elif menu == "💸 المصروفات والنثريات المالية":
+  st.header("💸 المصروفات اليومية والنثريات")
+  t1, t2 = st.tabs(["➕ تسجيل مصروف", "📋 سجل المصروفات"])
+
+  with t1:
+    with st.form("exp_f", clear_on_submit=True):
+      e_title = st.text_input("عنوان المصروف (إيجار، كهرباء، رواتب...):")
+      e_amt = st.number_input("المبلغ (د.أ):", min_value=0.1)
+      e_cat = st.selectbox(
+          "التصنيف:", ["تشغيلي", "رواتب", "فواتير وطاقة", "تسويق", "أخرى"]
+      )
+      e_notes = st.text_area("ملاحظات:")
+      if st.form_submit_button("💾 حفظ المصروف", type="primary"):
+        if e_title and e_amt > 0:
+          conn = sqlite3.connect(DB_NAME)
+          c = conn.cursor()
+          c.execute(
+              "INSERT INTO expenses (date, title, amount, category, notes)"
+              " VALUES (?, ?, ?, ?, ?)",
+              (
+                  datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  e_title,
+                  e_amt,
+                  e_cat,
+                  e_notes,
+              ),
+          )
+          conn.commit()
+          conn.close()
+          st.success("تم تسجيل المصروف بنجاح!")
+          st.rerun()
+
+  with t2:
+    conn = sqlite3.connect(DB_NAME)
+    df_exps = pd.read_sql_query("SELECT * FROM expenses ORDER BY id DESC", conn)
+    conn.close()
+    if df_exps.empty:
+      st.info("لا توجد مصروفات مسجلة.")
+    else:
+      st.dataframe(df_exps, use_container_width=True, hide_index=True)
+      st.metric("إجمالي المصروفات", f"{df_exps['amount'].sum():.2f} د.أ")
+
+# ----------------------------------------------------
+# 9. طلبات الموردين والشراء
+# ----------------------------------------------------
+elif menu == "🚚 طلبات الموردين والشراء":
+  st.header("🚚 سجل طلبات التوريد والشراء")
+  t1, t2 = st.tabs(["➕ توريد بضاعة جديدة", "📋 سجل المشتريات"])
+  df_p = get_products()
+
+  with t1:
+    if df_p.empty:
+      st.warning("أضف منتجات للمخزن أولاً.")
+    else:
+      with st.form("pur_f", clear_on_submit=True):
+        sup = st.text_input("اسم المورد / الشركة:")
+        p_sel = st.selectbox("المنتج المراد توريده:", df_p["name"].tolist())
+        q_add = st.number_input("الكمية المضافة:", min_value=1, value=10)
+        c_tot = st.number_input("إجمالي التكلفة المدفوعة:", min_value=0.0)
+
+        if st.form_submit_button("📥 تأكيد التوريد وتحديث المخزن", type="primary"):
+          if sup:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO purchases (date, supplier_name, product_name,"
+                " quantity, total_cost) VALUES (?, ?, ?, ?, ?)",
+                (
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    sup,
+                    p_sel,
+                    q_add,
+                    c_tot,
+                ),
+            )
+            c.execute(
+                "UPDATE products SET stock = stock + ? WHERE name = ?",
+                (q_add, p_sel),
+            )
+            conn.commit()
+            conn.close()
+            st.success("تم توريد البضاعة وتحديث المخزن بنجاح!")
+            st.rerun()
+
+  with t2:
+    conn = sqlite3.connect(DB_NAME)
+    df_purs = pd.read_sql_query("SELECT * FROM purchases ORDER BY id DESC", conn)
+    conn.close()
+    if df_purs.empty:
+      st.info("لا توجد سجلات توريد سابقة.")
+    else:
+      st.dataframe(df_purs, use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------
+# 10. أرباح المنتجات والتقارير
+# ----------------------------------------------------
+elif menu == "📈 أرباح المنتجات والتقارير":
+  st.header("📈 تقرير أداء وأرباح المنتجات")
+  conn = sqlite3.connect(DB_NAME)
+  df_rep = pd.read_sql_query(
+      "SELECT product_name, SUM(quantity) as total_qty, SUM(total_price) as"
+      " total_rev, SUM(net_profit) as total_prof FROM sales GROUP BY"
+      " product_name",
+      conn,
+  )
+  conn.close()
+
+  if df_rep.empty:
+    st.info("لا توجد بيانات مبيعات كافية لعرض تقرير الأرباح.")
+  else:
+    st.dataframe(df_rep, use_container_width=True, hide_index=True)
+    st.subheader("📊 رسم بياني للأرباح حسب المنتجات")
+    fig_p = px.bar(
+        df_rep,
+        x="product_name",
+        y="total_prof",
+        labels={"product_name": "المنتج", "total_prof": "صافي الربح (د.أ)"},
+        color="total_prof",
+        color_continuous_scale="Sunset",
+    )
+    st.plotly_chart(fig_p, use_container_width=True)
+
+# ----------------------------------------------------
+# 11. إدارة المستخدمين والصلاحيات
+# ----------------------------------------------------
+elif menu == "⚙️ إدارة المستخدمين والصلاحيات":
+  st.header("⚙️ إدارة صلاحيات وحسابات النظام")
+  t1, t2 = st.tabs(["➕ إضافة مستخدم", "📋 قائمة المستخدمين"])
+
+  with t1:
+    with st.form("new_u", clear_on_submit=True):
+      nu = st.text_input("اسم المستخدم الجديد:")
+      np = st.text_input("كلمة المرور:", type="password")
+      nr = st.selectbox("الصلاحية:", ["مدير النظام", "موظف مبيعات"])
+      if st.form_submit_button("💾 إنشاء الحساب", type="primary"):
+        if nu and np:
+          try:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                (nu, np, nr),
+            )
+            conn.commit()
+            conn.close()
+            st.success(f"تم إنشاء حساب `{nu}` بنجاح!")
+            st.rerun()
+          except sqlite3.IntegrityError:
+            st.error("اسم المستخدم مستخدم مسبقاً!")
+
+  with t2:
+    conn = sqlite3.connect(DB_NAME)
+    df_u = pd.read_sql_query("SELECT id, username, role FROM users", conn)
+    conn.close()
+    st.dataframe(df_u, use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------
+# 12. سجل الرقابة الأمنية (Audit Log)
+# ----------------------------------------------------
+elif menu == "📜 سجل الرقابة الأمنية (Audit Log)":
+  st.header("📜 سجل العمليات والرقابة الأمنية")
+  conn = sqlite3.connect(DB_NAME)
+  st.dataframe(
+      pd.read_sql_query("SELECT * FROM audit_logs ORDER BY id DESC", conn),
+      use_container_width=True,
+      hide_index=True,
+  )
+  conn.close()
+
+# ----------------------------------------------------
+# 13. النسخ الاحتياطي
+# ----------------------------------------------------
+elif menu == "💾 النسخ الاحتياطي":
+  st.header("💾 النسخ الاحتياطي لقاعدة البيانات")
+  with open(DB_NAME, "rb") as f:
+    st.download_button(
+        "💾 تحميل نسخة قاعدة البيانات الاحتياطية `.db`",
+        data=f,
+        file_name=f"Backup_{datetime.date.today()}.db",
+        mime="application/x-sqlite3",
+        type="primary",
+        use_container_width=True,
+    )
+
+
+elif print(ddkkbd
+           oejjrjjrj)
+(aj,sf 
+ se'tfj jiddjkkddn ajdh fo;;l  sjig  fbf lepejr  pkdcdd w[EnvironmentErrorffoor])
+ epekre EOFError PendingDeprecationWarning  p_row ellipsis e0 open ReferenceError  EOFError
+ OSError def  ord def
+  ej  je next_day_idx KeyboardInterrupt
+  kdkw   e  ek  je
+    KeyboardInterrupt KeyboardInterrupt
+    ellipsise   ellipsis IndexError dk
+    
